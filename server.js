@@ -5,10 +5,8 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
-// Importar configuración de base de datos según entorno
-const dbConfig = process.env.NODE_ENV === 'production' 
-  ? require('./config/database-pg')
-  : require('./config/database');
+// Importar configuración unificada de base de datos
+const dbConfig = require('./config/database');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -20,8 +18,8 @@ app.use(helmet({
 
 // Rate Limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100
 });
 app.use('/api/', limiter);
 
@@ -40,29 +38,31 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Health Check
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    environment: process.env.NODE_ENV,
-    database: process.env.NODE_ENV === 'production' ? 'PostgreSQL' : 'SQLite',
-    timestamp: new Date().toISOString()
-  });
+app.get('/api/health', async (req, res) => {
+  try {
+    const dbHealth = await dbConfig.healthCheck();
+    res.json({ 
+      status: 'OK', 
+      environment: process.env.NODE_ENV,
+      database: dbHealth,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'ERROR',
+      error: error.message
+    });
+  }
 });
 
-
 // Inicializar base de datos
-const initializeDB = process.env.NODE_ENV === 'production' 
-  ? dbConfig.initializePostgreSQL 
-  : dbConfig.initializeDatabase;
-
 console.log('🚀 Iniciando servidor...');
 console.log('Modo:', process.env.NODE_ENV);
-console.log('Base de datos:', process.env.NODE_ENV === 'production' ? 'PostgreSQL' : 'SQLite');
 
-initializeDB().then(() => {
-  console.log(`✅ Base de datos inicializada en modo ${process.env.NODE_ENV}`);
+dbConfig.initializeDatabase().then(() => {
+  console.log(`✅ Base de datos inicializada correctamente`);
   
-  // Rutas API (mantener igual)
+  // Rutas API
   const authRoutes = require('./routes/auth');
   const employeeRoutes = require('./routes/employees');
   const userRoutes = require('./routes/users');
@@ -76,27 +76,6 @@ initializeDB().then(() => {
   app.use('/api/attendance', attendanceRoutes);
   app.use('/api/reports', reportRoutes);
   app.use('/api/dashboard', dashboardRoutes);
-
-  // Health check mejorado
-  app.get('/api/health', async (req, res) => {
-    try {
-      const dbHealth = process.env.NODE_ENV === 'production' 
-        ? await dbConfig.healthCheck()
-        : { status: 'healthy', database: 'SQLite' };
-      
-      res.json({ 
-        status: 'OK', 
-        environment: process.env.NODE_ENV,
-        database: dbHealth,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      res.status(500).json({
-        status: 'ERROR',
-        error: error.message
-      });
-    }
-  });
 
   // Manejo de errores 404
   app.use('*', (req, res) => {
@@ -119,11 +98,9 @@ initializeDB().then(() => {
 
   app.listen(PORT, () => {
     console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
-    console.log(`📊 Modo: ${process.env.NODE_ENV}`);
     console.log(`📍 Health: http://localhost:${PORT}/api/health`);
   });
 }).catch(error => {
   console.error('❌ Error crítico inicializando base de datos:', error.message);
-  console.error('El servidor no puede iniciar sin base de datos');
   process.exit(1);
 });
