@@ -49,15 +49,20 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+
 // Inicializar base de datos
 const initializeDB = process.env.NODE_ENV === 'production' 
   ? dbConfig.initializePostgreSQL 
   : dbConfig.initializeDatabase;
 
+console.log('🚀 Iniciando servidor...');
+console.log('Modo:', process.env.NODE_ENV);
+console.log('Base de datos:', process.env.NODE_ENV === 'production' ? 'PostgreSQL' : 'SQLite');
+
 initializeDB().then(() => {
   console.log(`✅ Base de datos inicializada en modo ${process.env.NODE_ENV}`);
   
-  // Rutas API
+  // Rutas API (mantener igual)
   const authRoutes = require('./routes/auth');
   const employeeRoutes = require('./routes/employees');
   const userRoutes = require('./routes/users');
@@ -71,6 +76,27 @@ initializeDB().then(() => {
   app.use('/api/attendance', attendanceRoutes);
   app.use('/api/reports', reportRoutes);
   app.use('/api/dashboard', dashboardRoutes);
+
+  // Health check mejorado
+  app.get('/api/health', async (req, res) => {
+    try {
+      const dbHealth = process.env.NODE_ENV === 'production' 
+        ? await dbConfig.healthCheck()
+        : { status: 'healthy', database: 'SQLite' };
+      
+      res.json({ 
+        status: 'OK', 
+        environment: process.env.NODE_ENV,
+        database: dbHealth,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'ERROR',
+        error: error.message
+      });
+    }
+  });
 
   // Manejo de errores 404
   app.use('*', (req, res) => {
@@ -97,6 +123,7 @@ initializeDB().then(() => {
     console.log(`📍 Health: http://localhost:${PORT}/api/health`);
   });
 }).catch(error => {
-  console.error('❌ Error inicializando base de datos:', error);
+  console.error('❌ Error crítico inicializando base de datos:', error.message);
+  console.error('El servidor no puede iniciar sin base de datos');
   process.exit(1);
 });
