@@ -2,22 +2,22 @@ const express = require('express');
 const router = express.Router();
 const { runQuery, allQuery } = require('../config/database');
 
-// Resetear base de datos (mantener usuarios)
+// Resetear base de datos (mantener usuarios) - CORREGIDO
 router.delete('/reset-database', async (req, res) => {
   try {
     console.log('🧹 Iniciando reset de base de datos...');
 
-    // Eliminar todos los registros de asistencia
+    // ✅ CORREGIDO: Eliminar tablas específicas
     await runQuery('DELETE FROM attendance');
     console.log('✅ Registros de asistencia eliminados');
 
-    // Eliminar todos los empleados
     await runQuery('DELETE FROM employees');
     console.log('✅ Empleados eliminados');
 
-    // Reiniciar los autoincrementos
-    await runQuery('DELETE FROM sqlite_sequence WHERE name IN ("employees", "attendance")');
-    console.log('✅ Auto-incrementos reseteados');
+    // ✅ CORREGIDO: Reiniciar secuencias de PostgreSQL
+    await runQuery('ALTER SEQUENCE employees_id_seq RESTART WITH 1');
+    await runQuery('ALTER SEQUENCE attendance_id_seq RESTART WITH 1');
+    console.log('✅ Secuencias reseteadas');
 
     res.json({
       success: true,
@@ -38,7 +38,7 @@ router.delete('/reset-database', async (req, res) => {
   }
 });
 
-// Obtener estadísticas de la base de datos
+// Obtener estadísticas de la base de datos - CORREGIDO
 router.get('/stats', async (req, res) => {
   try {
     const [users, employees, attendance] = await Promise.all([

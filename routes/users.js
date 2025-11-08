@@ -5,9 +5,10 @@ const { authenticateToken, requireSuperAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
-// GET /api/users - Obtener todos los usuarios
+// GET /api/users - CORREGIDO
 router.get('/', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
+    // ✅ CORREGIDO: is_active = 1 → is_active = true
     const users = await allQuery(`
       SELECT 
         id, 
@@ -17,7 +18,7 @@ router.get('/', authenticateToken, requireSuperAdmin, async (req, res) => {
         created_at,
         updated_at
       FROM users 
-      WHERE is_active = 1
+      WHERE is_active = true
       ORDER BY created_at DESC
     `);
 
@@ -36,12 +37,13 @@ router.get('/', authenticateToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
-// GET /api/users/:id - Obtener usuario por ID
+// GET /api/users/:id - CORREGIDO
 router.get('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
+    // ✅ CORREGIDO: ? → $1, is_active = 1 → is_active = true
     const user = await getQuery(
       `SELECT id, username, role, created_at, updated_at 
-       FROM users WHERE id = ? AND is_active = 1`,
+       FROM users WHERE id = $1 AND is_active = true`,
       [req.params.id]
     );
 
@@ -66,12 +68,11 @@ router.get('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
-// POST /api/users - Crear nuevo usuario
+// POST /api/users - CORREGIDO
 router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
     const { username, password, role } = req.body;
 
-    // Validaciones
     if (!username || !password || !role) {
       return res.status(400).json({
         success: false,
@@ -94,9 +95,9 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
       });
     }
 
-    // Verificar si el usuario ya existe
+    // ✅ CORREGIDO: ? → $1, is_active = 1 → is_active = true
     const existingUser = await getQuery(
-      'SELECT id FROM users WHERE username = ? AND is_active = 1',
+      'SELECT id FROM users WHERE username = $1 AND is_active = true',
       [username]
     );
 
@@ -107,18 +108,17 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
       });
     }
 
-    // Hash de la contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insertar usuario
+    // ✅ CORREGIDO: ? → $1, $2, $3
     const result = await runQuery(
-      'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
+      'INSERT INTO users (username, password, role) VALUES ($1, $2, $3)',
       [username, hashedPassword, role]
     );
 
-    // Obtener el usuario creado (sin password)
+    // ✅ CORREGIDO: ? → $1
     const newUser = await getQuery(
-      'SELECT id, username, role, created_at FROM users WHERE id = ?',
+      'SELECT id, username, role, created_at FROM users WHERE id = $1',
       [result.id]
     );
 
@@ -137,13 +137,12 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
-// PUT /api/users/:id - Actualizar usuario
+// PUT /api/users/:id - CORREGIDO
 router.put('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
     const { username, password, role } = req.body;
     const userId = req.params.id;
 
-    // Validaciones
     if (!username || !role) {
       return res.status(400).json({
         success: false,
@@ -159,9 +158,9 @@ router.put('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
       });
     }
 
-    // Verificar si el usuario existe
+    // ✅ CORREGIDO: ? → $1, is_active = 1 → is_active = true
     const existingUser = await getQuery(
-      'SELECT id FROM users WHERE id = ? AND is_active = 1',
+      'SELECT id FROM users WHERE id = $1 AND is_active = true',
       [userId]
     );
 
@@ -172,9 +171,9 @@ router.put('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
       });
     }
 
-    // Verificar si el username ya existe en otro usuario
+    // ✅ CORREGIDO: ? → $1, $2
     const duplicateUser = await getQuery(
-      'SELECT id FROM users WHERE username = ? AND id != ? AND is_active = 1',
+      'SELECT id FROM users WHERE username = $1 AND id != $2 AND is_active = true',
       [username, userId]
     );
 
@@ -185,11 +184,9 @@ router.put('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
       });
     }
 
-    // Preparar query de actualización
-    let updateQuery = 'UPDATE users SET username = ?, role = ?, updated_at = CURRENT_TIMESTAMP';
+    let updateQuery = 'UPDATE users SET username = $1, role = $2, updated_at = CURRENT_TIMESTAMP';
     let queryParams = [username, role];
 
-    // Si se proporciona nueva contraseña
     if (password && password.trim() !== '') {
       if (password.length < 6) {
         return res.status(400).json({
@@ -198,19 +195,18 @@ router.put('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
         });
       }
       const hashedPassword = await bcrypt.hash(password, 10);
-      updateQuery += ', password = ?';
+      updateQuery += ', password = $3';
       queryParams.push(hashedPassword);
     }
 
-    updateQuery += ' WHERE id = ?';
+    updateQuery += ' WHERE id = $' + (queryParams.length + 1);
     queryParams.push(userId);
 
-    // Actualizar usuario
     await runQuery(updateQuery, queryParams);
 
-    // Obtener el usuario actualizado
+    // ✅ CORREGIDO: ? → $1
     const updatedUser = await getQuery(
-      'SELECT id, username, role, created_at, updated_at FROM users WHERE id = ?',
+      'SELECT id, username, role, created_at, updated_at FROM users WHERE id = $1',
       [userId]
     );
 
@@ -229,14 +225,14 @@ router.put('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
-// DELETE /api/users/:id - Eliminar usuario (soft delete)
+// DELETE /api/users/:id - CORREGIDO
 router.delete('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
     const userId = req.params.id;
 
-    // Verificar si el usuario existe y no es super_admin
+    // ✅ CORREGIDO: ? → $1, is_active = 1 → is_active = true
     const existingUser = await getQuery(
-      'SELECT id, role FROM users WHERE id = ? AND is_active = 1',
+      'SELECT id, role FROM users WHERE id = $1 AND is_active = true',
       [userId]
     );
 
@@ -254,9 +250,9 @@ router.delete('/:id', authenticateToken, requireSuperAdmin, async (req, res) => 
       });
     }
 
-    // Soft delete
+    // ✅ CORREGIDO: ? → $1, is_active = 0 → is_active = false
     await runQuery(
-      'UPDATE users SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      'UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
       [userId]
     );
 

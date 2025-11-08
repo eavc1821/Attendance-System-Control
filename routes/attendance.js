@@ -12,11 +12,11 @@ const getLocalDate = () => {
   return `${year}-${month}-${day}`;
 };
 
-// POST /api/attendance/entry - Registrar entrada CON FECHA/HORA MEJORADA
+// POST /api/attendance/entry - CORREGIDO
 router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res) => {
   try {
     const { employee_id } = req.body;
-     const today = getLocalDate();
+    const today = getLocalDate();
 
     console.log('📥 Recibiendo solicitud de entrada:', { employee_id, today });
 
@@ -27,9 +27,9 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       });
     }
 
-    // Verificar si el empleado existe y está activo
+    // ✅ CORREGIDO: ? → $1, is_active = 1 → is_active = true
     const employee = await getQuery(
-      'SELECT id, name, type FROM employees WHERE id = ? AND is_active = 1',
+      'SELECT id, name, type FROM employees WHERE id = $1 AND is_active = true',
       [employee_id]
     );
 
@@ -40,9 +40,9 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       });
     }
 
-    // Verificar si ya existe registro para hoy
+    // ✅ CORREGIDO: ? → $1, $2
     const existingRecord = await getQuery(
-      'SELECT id, exit_time FROM attendance WHERE employee_id = ? AND date = ?',
+      'SELECT id, exit_time FROM attendance WHERE employee_id = $1 AND date = $2',
       [employee_id, today]
     );
 
@@ -60,7 +60,6 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       }
     }
 
-    // Obtener fecha y hora actual en formato completo
     const now = new Date();
     const entryTime = now.toLocaleTimeString('es-HN', { 
       hour12: false,
@@ -69,13 +68,13 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       second: '2-digit'
     });
     
-    const entryDateTime = now.toISOString(); // Guardar timestamp completo
+    const entryDateTime = now.toISOString();
 
     console.log('⏰ Registrando entrada:', { entryTime, entryDateTime });
 
-    // Registrar entrada
+    // ✅ CORREGIDO: ? → $1, $2, $3, $4
     const result = await runQuery(
-      'INSERT INTO attendance (employee_id, date, entry_time, created_at) VALUES (?, ?, ?, ?)',
+      'INSERT INTO attendance (employee_id, date, entry_time, created_at) VALUES ($1, $2, $3, $4)',
       [employee_id, today, entryTime, entryDateTime]
     );
 
@@ -105,15 +104,14 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
   }
 });
 
-// POST /api/attendance/exit - Registrar salida CON FECHA/HORA MEJORADA
-// POST /api/attendance/exit - VERSIÓN CORREGIDA SIN updated_at
+// POST /api/attendance/exit - CORREGIDO
 router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) => {
   console.log('🚨 ===== INICIANDO REGISTRO DE SALIDA =====');
   console.log('📥 DATOS RECIBIDOS:', JSON.stringify(req.body, null, 2));
 
   try {
     const { employee_id, hours_extra = 0, despalillo = 0, escogida = 0, monado = 0 } = req.body;
-     const today = getLocalDate();
+    const today = getLocalDate();
 
     if (!employee_id) {
       return res.status(400).json({
@@ -130,9 +128,9 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
       });
     }
 
-    // Verificar si el empleado existe
+    // ✅ CORREGIDO: ? → $1
     const employee = await getQuery(
-      'SELECT id, name, type, is_active FROM employees WHERE id = ?',
+      'SELECT id, name, type, is_active FROM employees WHERE id = $1',
       [employeeIdNum]
     );
 
@@ -150,12 +148,12 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
       });
     }
 
-    // Buscar entrada pendiente
+    // ✅ CORREGIDO: ? → $1, $2
     const attendanceRecord = await getQuery(
       `SELECT a.*, e.name, e.type 
        FROM attendance a 
        JOIN employees e ON a.employee_id = e.id 
-       WHERE a.employee_id = ? AND a.date = ? AND a.exit_time IS NULL`,
+       WHERE a.employee_id = $1 AND a.date = $2 AND a.exit_time IS NULL`,
       [employeeIdNum, today]
     );
 
@@ -166,13 +164,11 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
       });
     }
 
-    // Convertir valores a números
     const hoursExtraNum = parseFloat(hours_extra) || 0;
     const despalilloNum = parseFloat(despalillo) || 0;
     const escogidaNum = parseFloat(escogida) || 0;
     const monadoNum = parseFloat(monado) || 0;
 
-    // Calcular valores de producción
     let t_despalillo = 0;
     let t_escogida = 0;
     let t_monado = 0;
@@ -197,20 +193,20 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
 
     console.log('🔄 Ejecutando UPDATE...');
     
-    // CONSULTA CORREGIDA - SIN updated_at
+    // ✅ CORREGIDO: ? → $1, $2, etc.
     const updateResult = await runQuery(
       `UPDATE attendance 
-       SET exit_time = ?, 
-           hours_extra = ?, 
-           despalillo = ?, 
-           escogida = ?, 
-           monado = ?,
-           t_despalillo = ?, 
-           t_escogida = ?, 
-           t_monado = ?, 
-           prop_sabado = ?, 
-           septimo_dia = ?
-       WHERE id = ?`,
+       SET exit_time = $1, 
+           hours_extra = $2, 
+           despalillo = $3, 
+           escogida = $4, 
+           monado = $5,
+           t_despalillo = $6, 
+           t_escogida = $7, 
+           t_monado = $8, 
+           prop_sabado = $9, 
+           septimo_dia = $10
+       WHERE id = $11`,
       [
         exitTime, 
         hoursExtraNum, 
@@ -261,13 +257,14 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
   }
 });
 
-// GET /api/attendance/today - Obtener registros de hoy CON MEJOR FORMATO
+// GET /api/attendance/today - CORREGIDO
 router.get('/today', authenticateToken, async (req, res) => {
   try {
-     const today = getLocalDate();
+    const today = getLocalDate();
     
     console.log('📅 Obteniendo registros para:', today);
 
+    // ✅ CORREGIDO: ? → $1
     const records = await allQuery(`
       SELECT 
         a.*,
@@ -281,19 +278,16 @@ router.get('/today', authenticateToken, async (req, res) => {
         END as status
       FROM attendance a
       JOIN employees e ON a.employee_id = e.id
-      WHERE a.date = ?
+      WHERE a.date = $1
       ORDER BY a.entry_time DESC
     `, [today]);
 
     console.log(`📊 ${records.length} registros encontrados para hoy`);
 
-    // Procesar fechas para mejor formato
     const processedRecords = records.map(record => ({
       ...record,
-      // Formatear fechas para mostrar
       entry_time_display: record.entry_time,
       exit_time_display: record.exit_time || '-',
-      // Estado claro
       status: record.exit_time ? 'completed' : 'active',
       status_text: record.exit_time ? 'Completado' : 'En Trabajo'
     }));
@@ -313,4 +307,4 @@ router.get('/today', authenticateToken, async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = router;                

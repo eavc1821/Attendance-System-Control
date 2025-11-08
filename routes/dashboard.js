@@ -4,12 +4,12 @@ const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
-// GET /api/dashboard/stats - Estadísticas del dashboard
+// GET /api/dashboard/stats - CORREGIDO
 router.get('/stats', authenticateToken, async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     
-    // Obtener todas las estadísticas en paralelo
+    // ✅ CORREGIDO: is_active = 1 → is_active = true, ? → $1
     const [
       totalEmployees,
       todayAttendance,
@@ -17,35 +17,29 @@ router.get('/stats', authenticateToken, async (req, res) => {
       weeklyStats,
       recentActivity
     ] = await Promise.all([
-      // Total de empleados activos
-      getQuery('SELECT COUNT(*) as count FROM employees WHERE is_active = 1'),
-      
-      // Asistencia de hoy
-      getQuery('SELECT COUNT(*) as count FROM attendance WHERE date = ?', [today]),
-      
-      // Salidas pendientes
+      getQuery('SELECT COUNT(*) as count FROM employees WHERE is_active = true'),
+      getQuery('SELECT COUNT(*) as count FROM attendance WHERE date = $1', [today]),
       getQuery(`
         SELECT COUNT(*) as count 
         FROM attendance 
-        WHERE date = ? AND exit_time IS NULL
+        WHERE date = $1 AND exit_time IS NULL
       `, [today]),
       
-      // Estadísticas semanales
+      // ✅ CORREGIDO: Funciones PostgreSQL
       getQuery(`
         SELECT 
           COUNT(DISTINCT employee_id) as employees_this_week,
           SUM(
             CASE 
               WHEN exit_time IS NOT NULL THEN 
-                (julianday(exit_time) - julianday(entry_time)) * 24
+                EXTRACT(EPOCH FROM (exit_time::time - entry_time::time)) / 3600
               ELSE 0 
             END
           ) as total_hours
         FROM attendance 
-        WHERE date BETWEEN date('now', '-7 days') AND ?
+        WHERE date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND $1
       `, [today]),
       
-      // Actividad reciente (últimos 5 registros)
       allQuery(`
         SELECT 
           e.name as employee_name,
@@ -58,13 +52,12 @@ router.get('/stats', authenticateToken, async (req, res) => {
           END as action_type
         FROM attendance a
         JOIN employees e ON a.employee_id = e.id
-        WHERE a.date = ?
+        WHERE a.date = $1
         ORDER BY a.entry_time DESC
         LIMIT 5
       `, [today])
     ]);
 
-    // Calcular horas semanales
     const weeklyHours = weeklyStats ? Math.round(weeklyStats.total_hours * 10) / 10 : 0;
 
     res.json({
@@ -89,11 +82,12 @@ router.get('/stats', authenticateToken, async (req, res) => {
   }
 });
 
-// GET /api/dashboard/attendance-today - Asistencia de hoy
+// GET /api/dashboard/attendance-today - CORREGIDO
 router.get('/attendance-today', authenticateToken, async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     
+    // ✅ CORREGIDO: ? → $1
     const attendance = await allQuery(`
       SELECT 
         e.name,
@@ -108,7 +102,7 @@ router.get('/attendance-today', authenticateToken, async (req, res) => {
         END as status
       FROM attendance a
       JOIN employees e ON a.employee_id = e.id
-      WHERE a.date = ?
+      WHERE a.date = $1
       ORDER BY a.entry_time DESC
     `, [today]);
 
