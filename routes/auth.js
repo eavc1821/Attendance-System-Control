@@ -7,7 +7,7 @@ const { JWT_SECRET } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Login
+// Login - CORREGIDO
 router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -19,9 +19,9 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Buscar usuario - CORREGIDO: ? → $1
+    // ✅ CORREGIDO: is_active = 1 → is_active = true
     const user = await getQuery(
-      'SELECT * FROM users WHERE username = $1 AND is_active = 1',
+      'SELECT * FROM users WHERE username = $1 AND is_active = true',
       [username]
     );
 
@@ -85,9 +85,9 @@ router.post('/verify', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     
-    // Verificar que el usuario aún existe - CORREGIDO
+    // ✅ CORREGIDO: is_active = 1 → is_active = true
     const user = await getQuery(
-      'SELECT id, username, role FROM users WHERE id = $1 AND is_active = 1',
+      'SELECT id, username, role FROM users WHERE id = $1 AND is_active = true',
       [decoded.id]
     );
 
@@ -111,7 +111,7 @@ router.post('/verify', async (req, res) => {
   }
 });
 
-// PUT /api/auth/update-profile - Actualizar perfil del usuario actual
+// PUT /api/auth/update-profile - CORREGIDO
 router.put('/update-profile', authenticateToken, async (req, res) => {
   try {
     const { username, currentPassword, newPassword } = req.body;
@@ -124,9 +124,9 @@ router.put('/update-profile', authenticateToken, async (req, res) => {
       });
     }
 
-    // Obtener usuario actual - CORREGIDO
+    // ✅ CORREGIDO: is_active = 1 → is_active = true
     const user = await getQuery(
-      'SELECT * FROM users WHERE id = $1 AND is_active = 1',
+      'SELECT * FROM users WHERE id = $1 AND is_active = true',
       [userId]
     );
 
@@ -137,9 +137,9 @@ router.put('/update-profile', authenticateToken, async (req, res) => {
       });
     }
 
-    // Verificar si el nuevo username ya existe - CORREGIDO
+    // ✅ CORREGIDO
     const duplicateUser = await getQuery(
-      'SELECT id FROM users WHERE username = $1 AND id != $2 AND is_active = 1',
+      'SELECT id FROM users WHERE username = $1 AND id != $2 AND is_active = true',
       [username, userId]
     );
 
@@ -183,13 +183,15 @@ router.put('/update-profile', authenticateToken, async (req, res) => {
       queryParams.push(hashedPassword);
     }
 
-    updateQuery += ' WHERE id = $' + (queryParams.length + 1);
+    // Lógica corregida para parámetros
+    const idParamIndex = queryParams.length + 1;
+    updateQuery += ` WHERE id = $${idParamIndex}`;
     queryParams.push(userId);
 
     // Actualizar usuario
     await runQuery(updateQuery, queryParams);
 
-    // Obtener usuario actualizado - CORREGIDO
+    // Obtener usuario actualizado
     const updatedUser = await getQuery(
       'SELECT id, username, role, created_at, updated_at FROM users WHERE id = $1',
       [userId]
