@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getQuery, runQuery } = require('../config/database');
-const { authenticateToken } = require('../middleware/auth'); // Importar el middleware
+const { authenticateToken } = require('../middleware/auth');
 const { JWT_SECRET } = require('../middleware/auth');
 
 const router = express.Router();
@@ -19,9 +19,9 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Buscar usuario
+    // Buscar usuario - CORREGIDO: ? → $1
     const user = await getQuery(
-      'SELECT * FROM users WHERE username = ? AND is_active = 1',
+      'SELECT * FROM users WHERE username = $1 AND is_active = 1',
       [username]
     );
 
@@ -71,7 +71,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Verificar token
+// Verificar token - CORREGIDO
 router.post('/verify', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
@@ -85,9 +85,9 @@ router.post('/verify', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     
-    // Verificar que el usuario aún existe
+    // Verificar que el usuario aún existe - CORREGIDO
     const user = await getQuery(
-      'SELECT id, username, role FROM users WHERE id = ? AND is_active = 1',
+      'SELECT id, username, role FROM users WHERE id = $1 AND is_active = 1',
       [decoded.id]
     );
 
@@ -124,9 +124,9 @@ router.put('/update-profile', authenticateToken, async (req, res) => {
       });
     }
 
-    // Obtener usuario actual
+    // Obtener usuario actual - CORREGIDO
     const user = await getQuery(
-      'SELECT * FROM users WHERE id = ? AND is_active = 1',
+      'SELECT * FROM users WHERE id = $1 AND is_active = 1',
       [userId]
     );
 
@@ -137,9 +137,9 @@ router.put('/update-profile', authenticateToken, async (req, res) => {
       });
     }
 
-    // Verificar si el nuevo username ya existe en otro usuario
+    // Verificar si el nuevo username ya existe - CORREGIDO
     const duplicateUser = await getQuery(
-      'SELECT id FROM users WHERE username = ? AND id != ? AND is_active = 1',
+      'SELECT id FROM users WHERE username = $1 AND id != $2 AND is_active = 1',
       [username, userId]
     );
 
@@ -150,7 +150,7 @@ router.put('/update-profile', authenticateToken, async (req, res) => {
       });
     }
 
-    let updateQuery = 'UPDATE users SET username = ?, updated_at = CURRENT_TIMESTAMP';
+    let updateQuery = 'UPDATE users SET username = $1, updated_at = CURRENT_TIMESTAMP';
     let queryParams = [username];
 
     // Si se proporciona nueva contraseña
@@ -179,19 +179,19 @@ router.put('/update-profile', authenticateToken, async (req, res) => {
       }
 
       const hashedPassword = await bcrypt.hash(newPassword, 10);
-      updateQuery += ', password = ?';
+      updateQuery += ', password = $2';
       queryParams.push(hashedPassword);
     }
 
-    updateQuery += ' WHERE id = ?';
+    updateQuery += ' WHERE id = $' + (queryParams.length + 1);
     queryParams.push(userId);
 
     // Actualizar usuario
     await runQuery(updateQuery, queryParams);
 
-    // Obtener usuario actualizado
+    // Obtener usuario actualizado - CORREGIDO
     const updatedUser = await getQuery(
-      'SELECT id, username, role, created_at, updated_at FROM users WHERE id = ?',
+      'SELECT id, username, role, created_at, updated_at FROM users WHERE id = $1',
       [userId]
     );
 
