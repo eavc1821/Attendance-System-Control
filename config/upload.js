@@ -11,12 +11,16 @@ if (!fs.existsSync(uploadDir)) {
 // Configuración de multer para almacenamiento
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
+    // ✅ Asegurar que el directorio existe
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
     cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
-    // Generar nombre único para el archivo
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const extension = path.extname(file.originalname);
+    // ✅ Usar un nombre más limpio
     cb(null, 'employee-' + uniqueSuffix + extension);
   }
 });
