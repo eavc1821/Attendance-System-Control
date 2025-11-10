@@ -8,7 +8,7 @@ const upload = require('../config/upload');
 
 const router = express.Router();
 
-// GET /api/employees
+// GET /api/employees - MEJORADO PARA FOTOS
 router.get('/', authenticateToken, async (req, res) => {
   try {
     console.log('📥 GET /api/employees - Usuario:', req.user?.username);
@@ -31,14 +31,31 @@ router.get('/', authenticateToken, async (req, res) => {
 
     console.log(`✅ Encontrados ${employees.length} empleados activos`);
 
+    // ✅ CORREGIDO: URL dinámica para Railway
     const baseUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://gjd78.com' 
+      ? process.env.RAILWAY_STATIC_URL || `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` || 'https://gjd78.com'
       : 'http://localhost:5000';
 
-    const employeesWithFullPhoto = employees.map(employee => ({
-      ...employee,
-      photo: employee.photo ? `${baseUrl}${employee.photo}` : null
-    }));
+    console.log('🌐 Base URL para fotos:', baseUrl);
+
+    const employeesWithFullPhoto = employees.map(employee => {
+      // ✅ MEJORADO: Manejo robusto de fotos
+      let photoUrl = null;
+      if (employee.photo) {
+        // Si ya es una URL completa, mantenerla
+        if (employee.photo.startsWith('http')) {
+          photoUrl = employee.photo;
+        } else {
+          // Si es una ruta relativa, construir URL completa
+          photoUrl = `${baseUrl}${employee.photo}`;
+        }
+      }
+      
+      return {
+        ...employee,
+        photo: photoUrl
+      };
+    });
 
     res.json({
       success: true,
@@ -55,7 +72,7 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// POST /api/employees - CORREGIDO para trabajar con tu database.js
+// POST /api/employees - MEJORADO SUBIDA DE FOTOS
 router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'), async (req, res) => {
   let photoFile = null;
   
@@ -234,8 +251,6 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
   
   try {
     console.log('📥 PUT /api/employees/:id - ID:', req.params.id);
-    console.log('📦 Body:', req.body);
-    console.log('📸 Archivo:', req.file);
 
     const { name, dni, type, monthly_salary, remove_photo } = req.body;
     photoFile = req.file;
@@ -322,14 +337,16 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
     }
 
     // Manejo de foto
-    let photoPath = existingEmployee.photo;
+     let photoPath = existingEmployee.photo;
     
     if (remove_photo === 'true' && existingEmployee.photo) {
-      const oldPhotoPath = path.join(__dirname, '..', existingEmployee.photo);
+      // Extraer solo el nombre del archivo de la URL
+      const filename = path.basename(existingEmployee.photo);
+      const oldPhotoPath = path.join(__dirname, '..', 'uploads', filename);
       if (fs.existsSync(oldPhotoPath)) {
         try {
           fs.unlinkSync(oldPhotoPath);
-          console.log('🗑️ Foto anterior eliminada');
+          console.log('🗑️ Foto anterior eliminada:', filename);
         } catch (e) {
           console.error('Error eliminando foto anterior:', e);
         }
@@ -340,17 +357,19 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
     if (photoFile) {
       // Eliminar foto anterior si existe
       if (existingEmployee.photo) {
-        const oldPhotoPath = path.join(__dirname, '..', existingEmployee.photo);
+        const filename = path.basename(existingEmployee.photo);
+        const oldPhotoPath = path.join(__dirname, '..', 'uploads', filename);
         if (fs.existsSync(oldPhotoPath)) {
           try {
             fs.unlinkSync(oldPhotoPath);
-            console.log('🗑️ Foto anterior reemplazada');
+            console.log('🗑️ Foto anterior reemplazada:', filename);
           } catch (e) {
             console.error('Error eliminando foto anterior:', e);
           }
         }
       }
       photoPath = `/uploads/${photoFile.filename}`;
+      console.log('📁 Nueva ruta de foto:', photoPath);
     }
 
     const salaryValue = parseFloat(monthly_salary) || 0;
@@ -397,8 +416,8 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
     }
 
     // Generar URL completa
-    const baseUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://gjd78.com' 
+   const baseUrl = process.env.NODE_ENV === 'production' 
+      ? process.env.RAILWAY_STATIC_URL || `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` || 'https://gjd78.com'
       : 'http://localhost:5000';
 
     if (updatedEmployee.photo) {
@@ -413,9 +432,7 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
 
   } catch (error) {
     console.error('❌ Error general actualizando empleado:', error);
-    console.error('🔍 Stack trace:', error.stack);
-    
-    if (photoFile) {
+    if (photoFile && photoFile.path) {
       try { 
         fs.unlinkSync(photoFile.path); 
         console.log('🗑️ Archivo temporal eliminado por error');

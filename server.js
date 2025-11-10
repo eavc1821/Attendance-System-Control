@@ -24,6 +24,10 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 app.set('trust proxy', 1);
 
+// ✅ SERVIR ARCHIVOS ESTÁTICOS - CRÍTICO PARA FOTOS
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(express.static(path.join(__dirname, 'public')));
+
 // CORS Configuration
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
