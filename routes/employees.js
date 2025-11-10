@@ -39,15 +39,17 @@ router.get('/', authenticateToken, async (req, res) => {
     console.log('🌐 Base URL para fotos:', baseUrl);
 
     const employeesWithFullPhoto = employees.map(employee => {
-      // ✅ MEJORADO: Manejo robusto de fotos
+      // ✅ CORREGIDO: Manejo consistente de fotos
       let photoUrl = null;
       if (employee.photo) {
-        // Si ya es una URL completa, mantenerla
+        // Si ya es una URL completa (puede pasar en edición), mantenerla
         if (employee.photo.startsWith('http')) {
           photoUrl = employee.photo;
         } else {
           // Si es una ruta relativa, construir URL completa
-          photoUrl = `${baseUrl}${employee.photo}`;
+          // Asegurar que no haya doble barra en la URL
+          const cleanPhotoPath = employee.photo.startsWith('/') ? employee.photo : `/${employee.photo}`;
+          photoUrl = `${baseUrl}${cleanPhotoPath}`;
         }
       }
       
@@ -209,8 +211,8 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
 
     // Generar URL completa
     const baseUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://gjd78.com' 
-      : 'http://localhost:5000';
+  ? process.env.RAILWAY_STATIC_URL || `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` || 'https://gjd78.com'
+  : 'http://localhost:5000';
 
     if (newEmployee.photo) {
       newEmployee.photo = `${baseUrl}${newEmployee.photo}`;
@@ -417,8 +419,8 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
 
     // Generar URL completa
    const baseUrl = process.env.NODE_ENV === 'production' 
-      ? process.env.RAILWAY_STATIC_URL || `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` || 'https://gjd78.com'
-      : 'http://localhost:5000';
+  ? process.env.RAILWAY_STATIC_URL || `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` || 'https://gjd78.com'
+  : 'http://localhost:5000';
 
     if (updatedEmployee.photo) {
       updatedEmployee.photo = `${baseUrl}${updatedEmployee.photo}`;
