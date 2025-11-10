@@ -8,7 +8,7 @@ const upload = require('../config/upload');
 
 const router = express.Router();
 
-// GET /api/employees - MEJORADO
+// GET /api/employees - YA CORRECTO
 router.get('/', authenticateToken, async (req, res) => {
   try {
     console.log('📥 GET /api/employees - Usuario:', req.user?.username);
@@ -31,14 +31,12 @@ router.get('/', authenticateToken, async (req, res) => {
 
     console.log(`✅ Encontrados ${employees.length} empleados activos`);
 
-    // ✅ MEJORADO: Manejo más robusto de URLs
     const baseUrl = process.env.NODE_ENV === 'production' 
       ? 'https://gjd78.com' 
       : 'http://localhost:5000';
 
     const employeesWithFullPhoto = employees.map(employee => ({
       ...employee,
-      // ✅ FIX: Solo generar URL completa si hay foto
       photo: employee.photo ? `${baseUrl}${employee.photo}` : null
     }));
 
@@ -57,15 +55,17 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// POST /api/employees - MEJORADO CON MÁS DEBUG
+// POST /api/employees - CORREGIDO EL PROBLEMA
 router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'), async (req, res) => {
+  let photoFile = null;
+  
   try {
     console.log('📥 POST /api/employees - Body:', req.body);
     console.log('📸 Archivo recibido:', req.file);
     console.log('👤 Usuario:', req.user?.username);
 
     const { name, dni, type, monthly_salary } = req.body;
-    const photoFile = req.file;
+    photoFile = req.file;
 
     // ✅ VALIDACIONES MEJORADAS
     if (!name || !dni || !type) {
@@ -103,11 +103,24 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
       });
     }
 
-    // ✅ VERIFICAR DNI EXISTENTE
-    const existingEmployee = await getQuery(
-      'SELECT id FROM employees WHERE dni = $1 AND is_active = true',
-      [dni]
-    );
+    // ✅ VERIFICAR DNI EXISTENTE - CON MANEJO DE ERRORES MEJORADO
+    let existingEmployee;
+    try {
+      existingEmployee = await getQuery(
+        'SELECT id FROM employees WHERE dni = $1 AND is_active = true',
+        [dni]
+      );
+      console.log('🔍 Resultado de búsqueda de DNI existente:', existingEmployee);
+    } catch (dbError) {
+      console.error('❌ Error en consulta de DNI existente:', dbError);
+      if (photoFile) {
+        try { fs.unlinkSync(photoFile.path); } catch (e) { console.error('Error eliminando archivo:', e); }
+      }
+      return res.status(500).json({
+        success: false,
+        error: 'Error al verificar DNI en la base de datos'
+      });
+    }
 
     if (existingEmployee) {
       console.log('❌ DNI ya existe:', dni);
@@ -133,20 +146,47 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
 
     console.log('💾 Insertando empleado en BD...');
     
-    // ✅ INSERTAR EMPLEADO - CORREGIDO
-    const result = await runQuery(
-      `INSERT INTO employees (name, dni, type, monthly_salary, photo, qr_code) 
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [name.trim(), dni, type, salaryValue, photoPath, qrCode]
-    );
+    // ✅ INSERTAR EMPLEADO - CON MANEJO DE RESULTADO MEJORADO
+    let result;
+    try {
+      result = await runQuery(
+        `INSERT INTO employees (name, dni, type, monthly_salary, photo, qr_code) 
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [name.trim(), dni, type, salaryValue, photoPath, qrCode]
+      );
+      console.log('✅ Empleado insertado con ID:', result.id);
+    } catch (insertError) {
+      console.error('❌ Error insertando empleado:', insertError);
+      if (photoFile) {
+        try { fs.unlinkSync(photoFile.path); } catch (e) { console.error('Error eliminando archivo:', e); }
+      }
+      return res.status(500).json({
+        success: false,
+        error: 'Error al insertar empleado en la base de datos: ' + insertError.message
+      });
+    }
 
-    console.log('✅ Empleado insertado con ID:', result.id);
-
-    // ✅ OBTENER EMPLEADO CREADO
-    const newEmployee = await getQuery(
-      'SELECT * FROM employees WHERE id = $1',
-      [result.id]
-    );
+    // ✅ OBTENER EMPLEADO CREADO - CON VERIFICACIÓN DE EXISTENCIA
+    let newEmployee;
+    try {
+      newEmployee = await getQuery(
+        'SELECT * FROM employees WHERE id = $1',
+        [result.id]
+      );
+      
+      if (!newEmployee) {
+        throw new Error('No se pudo recuperar el empleado recién creado');
+      }
+      
+      console.log('✅ Empleado recuperado después de crear:', newEmployee);
+    } catch (retrieveError) {
+      console.error('❌ Error recuperando empleado creado:', retrieveError);
+      // No eliminamos la foto aquí porque ya se guardó en la BD
+      return res.status(500).json({
+        success: false,
+        error: 'Empleado creado pero error al recuperar datos: ' + retrieveError.message
+      });
+    }
 
     // ✅ GENERAR URL COMPLETA
     const baseUrl = process.env.NODE_ENV === 'production' 
@@ -166,13 +206,13 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
     });
 
   } catch (error) {
-    console.error('❌ Error creando empleado:', error);
+    console.error('❌ Error general creando empleado:', error);
     console.error('🔍 Stack trace:', error.stack);
     
     // ✅ LIMPIAR ARCHIVO SUBIDO EN CASO DE ERROR
-    if (req.file) {
+    if (photoFile) {
       try { 
-        fs.unlinkSync(req.file.path); 
+        fs.unlinkSync(photoFile.path); 
         console.log('🗑️ Archivo temporal eliminado por error');
       } catch (e) { 
         console.error('Error eliminando archivo temporal:', e); 
@@ -186,15 +226,17 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
   }
 });
 
-// PUT /api/employees/:id - MEJORADO
+// PUT /api/employees/:id - CORREGIDO EL PROBLEMA DE undefined
 router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('photo'), async (req, res) => {
+  let photoFile = null;
+  
   try {
     console.log('📥 PUT /api/employees/:id - ID:', req.params.id);
     console.log('📦 Body:', req.body);
     console.log('📸 Archivo:', req.file);
 
     const { name, dni, type, monthly_salary, remove_photo } = req.body;
-    const photoFile = req.file;
+    photoFile = req.file;
     const employeeId = req.params.id;
 
     // ✅ VALIDACIONES
@@ -218,12 +260,26 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
       });
     }
 
-    // ✅ VERIFICAR QUE EL EMPLEADO EXISTA
-    const existingEmployee = await getQuery(
-      'SELECT id, photo FROM employees WHERE id = $1 AND is_active = true',
-      [employeeId]
-    );
+    // ✅ VERIFICAR QUE EL EMPLEADO EXISTA - CON MANEJO MEJORADO
+    let existingEmployee;
+    try {
+      existingEmployee = await getQuery(
+        'SELECT id, photo FROM employees WHERE id = $1 AND is_active = true',
+        [employeeId]
+      );
+      console.log('🔍 Empleado existente encontrado:', existingEmployee);
+    } catch (dbError) {
+      console.error('❌ Error buscando empleado existente:', dbError);
+      if (photoFile) {
+        try { fs.unlinkSync(photoFile.path); } catch (e) { console.error('Error eliminando archivo:', e); }
+      }
+      return res.status(500).json({
+        success: false,
+        error: 'Error al buscar empleado en la base de datos'
+      });
+    }
 
+    // ✅ VERIFICACIÓN CORREGIDA - Manejar tanto undefined como null
     if (!existingEmployee) {
       console.log('❌ Empleado no encontrado:', employeeId);
       if (photoFile) {
@@ -236,10 +292,22 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
     }
 
     // ✅ VERIFICAR DNI DUPLICADO
-    const duplicateDni = await getQuery(
-      'SELECT id FROM employees WHERE dni = $1 AND id != $2 AND is_active = true',
-      [dni, employeeId]
-    );
+    let duplicateDni;
+    try {
+      duplicateDni = await getQuery(
+        'SELECT id FROM employees WHERE dni = $1 AND id != $2 AND is_active = true',
+        [dni, employeeId]
+      );
+    } catch (dbError) {
+      console.error('❌ Error verificando DNI duplicado:', dbError);
+      if (photoFile) {
+        try { fs.unlinkSync(photoFile.path); } catch (e) { console.error('Error eliminando archivo:', e); }
+      }
+      return res.status(500).json({
+        success: false,
+        error: 'Error al verificar DNI duplicado'
+      });
+    }
 
     if (duplicateDni) {
       console.log('❌ DNI duplicado:', dni);
@@ -252,9 +320,9 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
       });
     }
 
+    // ✅ MANEJO DE FOTO MEJORADO - CON VERIFICACIÓN DE existingEmployee
     let photoPath = existingEmployee.photo;
     
-    // ✅ MANEJO DE FOTO MEJORADO
     if (remove_photo === 'true' && existingEmployee.photo) {
       const oldPhotoPath = path.join(__dirname, '..', existingEmployee.photo);
       if (fs.existsSync(oldPhotoPath)) {
@@ -287,20 +355,43 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
     const salaryValue = parseFloat(monthly_salary) || 0;
 
     // ✅ ACTUALIZAR EMPLEADO
-    await runQuery(
-      `UPDATE employees 
-       SET name = $1, dni = $2, type = $3, monthly_salary = $4, photo = $5, updated_at = CURRENT_TIMESTAMP 
-       WHERE id = $6`,
-      [name.trim(), dni, type, salaryValue, photoPath, employeeId]
-    );
-
-    console.log('✅ Empleado actualizado:', employeeId);
+    try {
+      await runQuery(
+        `UPDATE employees 
+         SET name = $1, dni = $2, type = $3, monthly_salary = $4, photo = $5, updated_at = CURRENT_TIMESTAMP 
+         WHERE id = $6`,
+        [name.trim(), dni, type, salaryValue, photoPath, employeeId]
+      );
+      console.log('✅ Empleado actualizado:', employeeId);
+    } catch (updateError) {
+      console.error('❌ Error actualizando empleado:', updateError);
+      if (photoFile) {
+        try { fs.unlinkSync(photoFile.path); } catch (e) { console.error('Error eliminando archivo:', e); }
+      }
+      return res.status(500).json({
+        success: false,
+        error: 'Error al actualizar empleado en la base de datos: ' + updateError.message
+      });
+    }
 
     // ✅ OBTENER EMPLEADO ACTUALIZADO
-    const updatedEmployee = await getQuery(
-      'SELECT * FROM employees WHERE id = $1',
-      [employeeId]
-    );
+    let updatedEmployee;
+    try {
+      updatedEmployee = await getQuery(
+        'SELECT * FROM employees WHERE id = $1',
+        [employeeId]
+      );
+      
+      if (!updatedEmployee) {
+        throw new Error('No se pudo recuperar el empleado actualizado');
+      }
+    } catch (retrieveError) {
+      console.error('❌ Error recuperando empleado actualizado:', retrieveError);
+      return res.status(500).json({
+        success: false,
+        error: 'Empleado actualizado pero error al recuperar datos: ' + retrieveError.message
+      });
+    }
 
     // ✅ GENERAR URL COMPLETA
     const baseUrl = process.env.NODE_ENV === 'production' 
@@ -318,12 +409,12 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
     });
 
   } catch (error) {
-    console.error('❌ Error actualizando empleado:', error);
+    console.error('❌ Error general actualizando empleado:', error);
     console.error('🔍 Stack trace:', error.stack);
     
-    if (req.file) {
+    if (photoFile) {
       try { 
-        fs.unlinkSync(req.file.path); 
+        fs.unlinkSync(photoFile.path); 
         console.log('🗑️ Archivo temporal eliminado por error');
       } catch (e) { 
         console.error('Error eliminando archivo temporal:', e); 
