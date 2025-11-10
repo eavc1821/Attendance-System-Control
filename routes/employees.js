@@ -8,7 +8,7 @@ const upload = require('../config/upload');
 
 const router = express.Router();
 
-// GET /api/employees - YA CORRECTO
+// GET /api/employees
 router.get('/', authenticateToken, async (req, res) => {
   try {
     console.log('📥 GET /api/employees - Usuario:', req.user?.username);
@@ -55,7 +55,7 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// POST /api/employees - CORREGIDO EL PROBLEMA
+// POST /api/employees - CORREGIDO para trabajar con tu database.js
 router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'), async (req, res) => {
   let photoFile = null;
   
@@ -67,7 +67,7 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
     const { name, dni, type, monthly_salary } = req.body;
     photoFile = req.file;
 
-    // ✅ VALIDACIONES MEJORADAS
+    // Validaciones
     if (!name || !dni || !type) {
       console.log('❌ Validación fallida - Campos requeridos faltantes');
       if (photoFile) {
@@ -90,7 +90,6 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
       });
     }
 
-    // ✅ VALIDACIÓN MEJORADA para salario
     const salaryValue = parseFloat(monthly_salary) || 0;
     if (type === 'Al Dia' && salaryValue <= 0) {
       console.log('❌ Validación fallida - Salario inválido para Al Dia');
@@ -103,7 +102,7 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
       });
     }
 
-    // ✅ VERIFICAR DNI EXISTENTE - CON MANEJO DE ERRORES MEJORADO
+    // Verificar DNI existente
     let existingEmployee;
     try {
       existingEmployee = await getQuery(
@@ -133,7 +132,7 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
       });
     }
 
-    // ✅ GENERAR QR
+    // Generar QR
     const qrData = JSON.stringify({ 
       id: Date.now(), 
       name, 
@@ -146,15 +145,26 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
 
     console.log('💾 Insertando empleado en BD...');
     
-    // ✅ INSERTAR EMPLEADO - CON MANEJO DE RESULTADO MEJORADO
-    let result;
+    // ✅ CORRECCIÓN: runQuery devuelve un objeto con propiedad 'rows'
+    let newEmployee;
     try {
-      result = await runQuery(
+      const result = await runQuery(
         `INSERT INTO employees (name, dni, type, monthly_salary, photo, qr_code) 
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
         [name.trim(), dni, type, salaryValue, photoPath, qrCode]
       );
-      console.log('✅ Empleado insertado con ID:', result.id);
+      
+      console.log('✅ Resultado completo de runQuery:', result);
+      
+      // ✅ CORRECCIÓN: Acceder a result.rows[0] para PostgreSQL
+      if (result && result.rows && result.rows.length > 0) {
+        newEmployee = result.rows[0];
+        console.log('✅ Empleado insertado con ID:', newEmployee.id);
+      } else {
+        console.error('❌ No se pudo obtener el empleado insertado. Resultado:', result);
+        throw new Error('No se pudo recuperar el empleado recién creado de la base de datos');
+      }
+      
     } catch (insertError) {
       console.error('❌ Error insertando empleado:', insertError);
       if (photoFile) {
@@ -166,29 +176,21 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
       });
     }
 
-    // ✅ OBTENER EMPLEADO CREADO - CON VERIFICACIÓN DE EXISTENCIA
-    let newEmployee;
-    try {
-      newEmployee = await getQuery(
-        'SELECT * FROM employees WHERE id = $1',
-        [result.id]
-      );
-      
-      if (!newEmployee) {
-        throw new Error('No se pudo recuperar el empleado recién creado');
+    // Verificar que newEmployee existe
+    if (!newEmployee) {
+      console.error('❌ newEmployee es undefined después de la inserción');
+      if (photoFile) {
+        try { fs.unlinkSync(photoFile.path); } catch (e) { console.error('Error eliminando archivo:', e); }
       }
-      
-      console.log('✅ Empleado recuperado después de crear:', newEmployee);
-    } catch (retrieveError) {
-      console.error('❌ Error recuperando empleado creado:', retrieveError);
-      // No eliminamos la foto aquí porque ya se guardó en la BD
       return res.status(500).json({
         success: false,
-        error: 'Empleado creado pero error al recuperar datos: ' + retrieveError.message
+        error: 'Empleado creado pero no se pudo recuperar los datos'
       });
     }
 
-    // ✅ GENERAR URL COMPLETA
+    console.log('✅ Empleado recuperado después de crear:', newEmployee);
+
+    // Generar URL completa
     const baseUrl = process.env.NODE_ENV === 'production' 
       ? 'https://gjd78.com' 
       : 'http://localhost:5000';
@@ -209,7 +211,7 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
     console.error('❌ Error general creando empleado:', error);
     console.error('🔍 Stack trace:', error.stack);
     
-    // ✅ LIMPIAR ARCHIVO SUBIDO EN CASO DE ERROR
+    // Limpiar archivo subido en caso de error
     if (photoFile) {
       try { 
         fs.unlinkSync(photoFile.path); 
@@ -226,7 +228,7 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
   }
 });
 
-// PUT /api/employees/:id - CORREGIDO EL PROBLEMA DE undefined
+// PUT /api/employees/:id - CORREGIDO para trabajar con tu database.js
 router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('photo'), async (req, res) => {
   let photoFile = null;
   
@@ -239,7 +241,7 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
     photoFile = req.file;
     const employeeId = req.params.id;
 
-    // ✅ VALIDACIONES
+    // Validaciones
     if (!name || !dni || !type) {
       if (photoFile) {
         try { fs.unlinkSync(photoFile.path); } catch (e) { console.error('Error eliminando archivo:', e); }
@@ -260,7 +262,7 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
       });
     }
 
-    // ✅ VERIFICAR QUE EL EMPLEADO EXISTA - CON MANEJO MEJORADO
+    // Verificar que el empleado exista
     let existingEmployee;
     try {
       existingEmployee = await getQuery(
@@ -279,7 +281,6 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
       });
     }
 
-    // ✅ VERIFICACIÓN CORREGIDA - Manejar tanto undefined como null
     if (!existingEmployee) {
       console.log('❌ Empleado no encontrado:', employeeId);
       if (photoFile) {
@@ -291,7 +292,7 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
       });
     }
 
-    // ✅ VERIFICAR DNI DUPLICADO
+    // Verificar DNI duplicado
     let duplicateDni;
     try {
       duplicateDni = await getQuery(
@@ -320,7 +321,7 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
       });
     }
 
-    // ✅ MANEJO DE FOTO MEJORADO - CON VERIFICACIÓN DE existingEmployee
+    // Manejo de foto
     let photoPath = existingEmployee.photo;
     
     if (remove_photo === 'true' && existingEmployee.photo) {
@@ -354,15 +355,27 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
 
     const salaryValue = parseFloat(monthly_salary) || 0;
 
-    // ✅ ACTUALIZAR EMPLEADO
+    // ✅ CORRECCIÓN: runQuery devuelve un objeto con propiedad 'rows'
+    let updatedEmployee;
     try {
-      await runQuery(
+      const result = await runQuery(
         `UPDATE employees 
          SET name = $1, dni = $2, type = $3, monthly_salary = $4, photo = $5, updated_at = CURRENT_TIMESTAMP 
-         WHERE id = $6`,
+         WHERE id = $6
+         RETURNING *`,
         [name.trim(), dni, type, salaryValue, photoPath, employeeId]
       );
-      console.log('✅ Empleado actualizado:', employeeId);
+      
+      console.log('✅ Resultado completo de runQuery:', result);
+      
+      // ✅ CORRECCIÓN: Acceder a result.rows[0] para PostgreSQL
+      if (result && result.rows && result.rows.length > 0) {
+        updatedEmployee = result.rows[0];
+        console.log('✅ Empleado actualizado:', updatedEmployee);
+      } else {
+        console.error('❌ No se pudo obtener el empleado actualizado. Resultado:', result);
+        throw new Error('No se pudo recuperar el empleado actualizado de la base de datos');
+      }
     } catch (updateError) {
       console.error('❌ Error actualizando empleado:', updateError);
       if (photoFile) {
@@ -374,26 +387,16 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
       });
     }
 
-    // ✅ OBTENER EMPLEADO ACTUALIZADO
-    let updatedEmployee;
-    try {
-      updatedEmployee = await getQuery(
-        'SELECT * FROM employees WHERE id = $1',
-        [employeeId]
-      );
-      
-      if (!updatedEmployee) {
-        throw new Error('No se pudo recuperar el empleado actualizado');
-      }
-    } catch (retrieveError) {
-      console.error('❌ Error recuperando empleado actualizado:', retrieveError);
+    // Verificar que updatedEmployee existe
+    if (!updatedEmployee) {
+      console.error('❌ updatedEmployee es undefined después de la actualización');
       return res.status(500).json({
         success: false,
-        error: 'Empleado actualizado pero error al recuperar datos: ' + retrieveError.message
+        error: 'Empleado actualizado pero no se pudo recuperar los datos'
       });
     }
 
-    // ✅ GENERAR URL COMPLETA
+    // Generar URL completa
     const baseUrl = process.env.NODE_ENV === 'production' 
       ? 'https://gjd78.com' 
       : 'http://localhost:5000';
@@ -428,12 +431,11 @@ router.put('/:id', authenticateToken, requireAdminOrScanner, upload.single('phot
   }
 });
 
-// DELETE /api/employees/:id - CORREGIDO
+// DELETE /api/employees/:id
 router.delete('/:id', authenticateToken, requireAdminOrScanner, async (req, res) => {
   try {
     const employeeId = req.params.id;
 
-    // ✅ CORREGIDO: ? → $1, is_active = 1 → is_active = true
     const existingEmployee = await getQuery(
       'SELECT id, photo FROM employees WHERE id = $1 AND is_active = true',
       [employeeId]
@@ -451,7 +453,6 @@ router.delete('/:id', authenticateToken, requireAdminOrScanner, async (req, res)
       if (fs.existsSync(photoPath)) fs.unlinkSync(photoPath);
     }
 
-    // ✅ CORREGIDO: ? → $1, is_active = 0 → is_active = false
     await runQuery(
       'UPDATE employees SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
       [employeeId]
@@ -471,10 +472,9 @@ router.delete('/:id', authenticateToken, requireAdminOrScanner, async (req, res)
   }
 });
 
-// GET /api/employees/:id/qr - CORREGIDO
+// GET /api/employees/:id/qr
 router.get('/:id/qr', authenticateToken, async (req, res) => {
   try {
-    // ✅ CORREGIDO: ? → $1, is_active = 1 → is_active = true
     const employee = await getQuery(
       'SELECT qr_code FROM employees WHERE id = $1 AND is_active = true',
       [req.params.id]
@@ -506,13 +506,12 @@ router.get('/:id/qr', authenticateToken, async (req, res) => {
   }
 });
 
-// GET /api/employees/:id/stats - CORREGIDO
+// GET /api/employees/:id/stats
 router.get('/:id/stats', authenticateToken, async (req, res) => {
   try {
     const employeeId = req.params.id;
     console.log(`📊 Solicitando estadísticas para empleado ID: ${employeeId}`);
 
-    // ✅ CORREGIDO: ? → $1, is_active = 1 → is_active = true
     const employee = await getQuery(
       'SELECT id, name, type, monthly_salary FROM employees WHERE id = $1 AND is_active = true',
       [employeeId]
@@ -536,7 +535,6 @@ router.get('/:id/stats', authenticateToken, async (req, res) => {
     if (employee.type === 'Producción') {
       console.log(`🔧 Calculando estadísticas para empleado de PRODUCCIÓN`);
       
-      // ✅ CORREGIDO: ? → $1, $2, $3 y funciones PostgreSQL
       const stats = await getQuery(`
         SELECT 
           COUNT(*) as dias_trabajados,
@@ -572,7 +570,6 @@ router.get('/:id/stats', authenticateToken, async (req, res) => {
     } else {
       console.log(`🔧 Calculando estadísticas para empleado AL DÍA`);
       
-      // ✅ CORREGIDO: ? → $1, $2, $3 y funciones PostgreSQL
       const stats = await getQuery(`
         SELECT 
           COUNT(*) as dias_trabajados,
