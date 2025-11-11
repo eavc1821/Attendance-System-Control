@@ -15,12 +15,13 @@ if (process.env.NODE_ENV === 'production') {
   }
   
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-  });
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  // ✅ ESTABLECER ZONA HORIA EN LA CONEXIÓN
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
+  max: 20
+});
   
   // Funciones para PostgreSQL
   dbConfig = {

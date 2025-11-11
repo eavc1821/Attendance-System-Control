@@ -4,28 +4,31 @@ const { authenticateToken, requireAdminOrScanner } = require('../middleware/auth
 
 const router = express.Router();
 
-// ✅ CORREGIDO: Función mejorada para obtener fecha/hora local
-const getLocalDateTime = () => {
-  const now = new Date();
-  
-  // Ajustar a zona horaria de América Central (UTC-6)
-  const offset = -6 * 60; // UTC-6 en minutos
-  const localTime = new Date(now.getTime() + offset * 60 * 1000);
-  
-  const year = localTime.getUTCFullYear();
-  const month = String(localTime.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(localTime.getUTCDate()).padStart(2, '0');
-  const hours = String(localTime.getUTCHours()).padStart(2, '0');
-  const minutes = String(localTime.getUTCMinutes()).padStart(2, '0');
-  const seconds = String(localTime.getUTCSeconds()).padStart(2, '0');
-  
-  return {
-    date: `${year}-${month}-${day}`,
-    time: `${hours}:${minutes}:${seconds}`
-  };
+// ✅ SOLUCIÓN DEFINITIVA: Usar PostgreSQL con conversión de zona horaria
+const getLocalDate = () => {
+  if (process.env.NODE_ENV === 'production') {
+    // En producción, PostgreSQL manejará la conversión de zona horaria
+    return 'CURRENT_DATE';
+  } else {
+    // Desarrollo con SQLite
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `'${year}-${month}-${day}'`;
+  }
 };
 
-// POST /api/attendance/entry - CORREGIDO
+// ✅ FUNCIÓN PARA OBTENER HORA LOCAL FORMATEADA
+const getLocalTime = () => {
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+};
+
+// POST /api/attendance/entry - SOLUCIÓN DEFINITIVA
 router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res) => {
   let client;
   
@@ -61,10 +64,6 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       });
     }
 
-    // ✅ USAR FECHA/HORA LOCAL CORREGIDA
-    const { date: today, time: currentTime } = getLocalDateTime();
-    console.log('🕐 Fecha/hora local:', today, currentTime);
-
     if (process.env.NODE_ENV === 'production') {
       const { Pool } = require('pg');
       const pool = new Pool({
@@ -76,18 +75,21 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       try {
         await client.query('BEGIN');
         
-        // ✅ VERIFICAR EXISTENCIA CON FECHA LOCAL
+        console.log('🔄 Verificando registro existente...');
+        
+        // ✅ USAR CONVERSIÓN DE ZONA HORARIA EN POSTGRESQL
         const existingRecord = await client.query(
           `SELECT id, entry_time, exit_time 
            FROM attendance 
-           WHERE employee_id = $1 AND date = $2`,
-          [employee_id, today]
+           WHERE employee_id = $1 AND date = (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date`,
+          [employee_id]
         );
 
         if (existingRecord.rows.length > 0) {
           const record = existingRecord.rows[0];
           console.log('ℹ️ Registro existente encontrado:', record);
           
+          // ✅ FORMATEAR HORA PARA MOSTRAR CORRECTAMENTE
           const entryTime = record.entry_time ? 
             formatTimeForDisplay(record.entry_time) : '--:--';
           
@@ -106,29 +108,33 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
           }
         }
 
-        // ✅ INSERTAR CON FECHA/HORA LOCAL EXPLÍCITA
+        // ✅ INSERTAR CON ZONA HORARIA CORRECTA
         console.log('💾 Insertando nuevo registro de entrada...');
         
         const result = await client.query(
           `INSERT INTO attendance (employee_id, date, entry_time) 
-           VALUES ($1, $2, $3) 
+           VALUES ($1, (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date, 
+                   (CURRENT_TIME AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::time) 
            RETURNING *`,
-          [employee_id, today, currentTime]
+          [employee_id]
         );
 
         await client.query('COMMIT');
         
         const newRecord = result.rows[0];
+        const displayTime = formatTimeForDisplay(newRecord.entry_time);
+        
         console.log('✅ Entrada registrada exitosamente:', {
           id: newRecord.id,
           employee: employee.name,
           date: newRecord.date,
-          entry_time: newRecord.entry_time
+          entry_time: newRecord.entry_time,
+          display_time: displayTime
         });
         
         res.json({
           success: true,
-          message: `Entrada registrada para ${employee.name} a las ${formatTimeForDisplay(currentTime)}`,
+          message: `Entrada registrada para ${employee.name} a las ${displayTime}`,
           data: newRecord
         });
         
@@ -140,7 +146,8 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       }
     } else {
       // SQLite (desarrollo)
-      const { date: today, time: currentTime } = getLocalDateTime();
+      const today = new Date().toISOString().split('T')[0];
+      const currentTime = getLocalTime();
       
       const existingRecord = await getQuery(
         `SELECT id, entry_time, exit_time 
@@ -168,7 +175,6 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
         }
       }
 
-      // ✅ USAR FECHA/HORA LOCAL PARA SQLITE
       const result = await runQuery(
         `INSERT INTO attendance (employee_id, date, entry_time) 
          VALUES ($1, $2, $3) 
@@ -200,37 +206,6 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
     
     // Manejo específico de duplicados
     if (error.code === '23505') {
-      // ✅ CONSULTAR REGISTRO EXISTENTE CON FECHA LOCAL
-      const { date: today } = getLocalDateTime();
-      try {
-        const existingRecord = await getQuery(
-          `SELECT a.*, e.name 
-           FROM attendance a 
-           JOIN employees e ON a.employee_id = e.id 
-           WHERE a.employee_id = $1 AND a.date = $2`,
-          [employee_id, today]
-        );
-
-        if (existingRecord) {
-          if (existingRecord.exit_time) {
-            return res.status(400).json({
-              success: false,
-              error: `El empleado ${existingRecord.name} ya completó su jornada hoy. No puede registrar otra entrada.`
-            });
-          } else {
-            const entryTime = existingRecord.entry_time ? 
-              formatTimeForDisplay(existingRecord.entry_time) : '--:--';
-            
-            return res.status(400).json({
-              success: false,
-              error: `El empleado ${existingRecord.name} ya tiene una entrada registrada hoy a las ${entryTime}. Registre la salida primero.`
-            });
-          }
-        }
-      } catch (queryError) {
-        console.error('Error consultando registro duplicado:', queryError);
-      }
-      
       return res.status(400).json({
         success: false,
         error: 'Ya existe un registro de asistencia para este empleado hoy'
@@ -244,16 +219,13 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
   }
 });
 
-// POST /api/attendance/exit - CORREGIDO CON ZONA HORARIA
+// POST /api/attendance/exit - ACTUALIZADO
 router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) => {
   console.log('🚨 ===== INICIANDO REGISTRO DE SALIDA =====');
   console.log('📥 DATOS RECIBIDOS:', JSON.stringify(req.body, null, 2));
 
   try {
     const { employee_id, hours_extra = 0, despalillo = 0, escogida = 0, monado = 0 } = req.body;
-    
-    // ✅ USAR FECHA LOCAL CORREGIDA
-    const { date: today, time: exitTime } = getLocalDateTime();
 
     if (!employee_id) {
       return res.status(400).json({
@@ -289,14 +261,33 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
       });
     }
 
-    // ✅ USAR FECHA LOCAL EN LA CONSULTA
-    const attendanceRecord = await getQuery(
-      `SELECT a.*, e.name, e.type 
-       FROM attendance a 
-       JOIN employees e ON a.employee_id = e.id 
-       WHERE a.employee_id = $1 AND a.date = $2 AND a.exit_time IS NULL`,
-      [employeeIdNum, today]
-    );
+    let attendanceRecord;
+    let today;
+
+    if (process.env.NODE_ENV === 'production') {
+      // ✅ USAR CONVERSIÓN DE ZONA HORARIA EN POSTGRESQL
+      attendanceRecord = await getQuery(
+        `SELECT a.*, e.name, e.type 
+         FROM attendance a 
+         JOIN employees e ON a.employee_id = e.id 
+         WHERE a.employee_id = $1 AND a.date = (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date AND a.exit_time IS NULL`,
+        [employeeIdNum]
+      );
+      
+      // Obtener la fecha actual local para el mensaje
+      const dateResult = await getQuery(`SELECT (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date as local_date`);
+      today = dateResult.local_date;
+    } else {
+      // SQLite
+      today = new Date().toISOString().split('T')[0];
+      attendanceRecord = await getQuery(
+        `SELECT a.*, e.name, e.type 
+         FROM attendance a 
+         JOIN employees e ON a.employee_id = e.id 
+         WHERE a.employee_id = $1 AND a.date = $2 AND a.exit_time IS NULL`,
+        [employeeIdNum, today]
+      );
+    }
 
     if (!attendanceRecord) {
       return res.status(400).json({
@@ -323,6 +314,16 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
       const total_produccion = t_despalillo + t_escogida + t_monado;
       prop_sabado = total_produccion * 0.90909;
       septimo_dia = total_produccion * 0.181818;
+    }
+
+    let exitTime;
+
+    if (process.env.NODE_ENV === 'production') {
+      // ✅ USAR HORA LOCAL DE POSTGRESQL
+      const timeResult = await getQuery(`SELECT (CURRENT_TIME AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::time as local_time`);
+      exitTime = timeResult.local_time;
+    } else {
+      exitTime = getLocalTime();
     }
 
     console.log('🔄 Ejecutando UPDATE...');
@@ -390,33 +391,54 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
   }
 });
 
-// GET /api/attendance/today - CORREGIDO CON ZONA HORARIA
+// GET /api/attendance/today - ACTUALIZADO
 router.get('/today', authenticateToken, async (req, res) => {
   try {
     console.log('📅 Obteniendo registros de hoy...');
     
-    // ✅ USAR FECHA LOCAL
-    const { date: today } = getLocalDateTime();
-    
-    const records = await allQuery(
-      `SELECT 
-        a.*,
-        e.name as employee_name,
-        e.dni as employee_dni, 
-        e.type as employee_type
-      FROM attendance a
-      JOIN employees e ON a.employee_id = e.id
-      WHERE a.date = $1
-      ORDER BY a.entry_time DESC`,
-      [today]
-    );
+    let records;
+    let today;
+
+    if (process.env.NODE_ENV === 'production') {
+      // ✅ USAR CONVERSIÓN DE ZONA HORARIA
+      records = await allQuery(
+        `SELECT 
+          a.*,
+          e.name as employee_name,
+          e.dni as employee_dni, 
+          e.type as employee_type
+        FROM attendance a
+        JOIN employees e ON a.employee_id = e.id
+        WHERE a.date = (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date
+        ORDER BY a.entry_time DESC`
+      );
+      
+      const dateResult = await getQuery(`SELECT (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date as local_date`);
+      today = dateResult.local_date;
+    } else {
+      // SQLite
+      today = new Date().toISOString().split('T')[0];
+      records = await allQuery(
+        `SELECT 
+          a.*,
+          e.name as employee_name,
+          e.dni as employee_dni, 
+          e.type as employee_type
+        FROM attendance a
+        JOIN employees e ON a.employee_id = e.id
+        WHERE a.date = $1
+        ORDER BY a.entry_time DESC`,
+        [today]
+      );
+    }
 
     console.log(`✅ Encontrados ${records.length} registros para hoy (${today})`);
     
     res.json({
       success: true,
       data: records,
-      count: records.length
+      count: records.length,
+      current_date: today
     });
 
   } catch (error) {
@@ -434,12 +456,12 @@ function formatTimeForDisplay(timeString) {
   try {
     if (typeof timeString === 'string') {
       // Si es un string de tiempo (HH:MM:SS)
-      if (timeString.match(/^\d{1,2}:\d{2}:\d{2}$/)) {
+      if (timeString.match(/^\d{1,2}:\d{2}:\d{2}/)) {
         return timeString.substring(0, 5); // Extraer HH:MM
       }
     }
     
-    // Si es un objeto Date o string ISO
+    // Si es un objeto Date
     const date = new Date(timeString);
     if (!isNaN(date.getTime())) {
       return date.toLocaleTimeString('es-HN', { 
