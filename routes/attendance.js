@@ -13,7 +13,8 @@ const getLocalDate = () => {
 };
 
 
-// POST /api/attendance/entry - MEJORADO CON MANEJO DE DUPLICADOS
+
+// POST /api/attendance/entry - CORREGIDO CON TIMEZONE Y VERIFICACIÓN MEJORADA
 router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res) => {
   try {
     console.log('📥 POST /api/attendance/entry - Body:', req.body);
@@ -47,11 +48,15 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       });
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    
-    // ✅ VERIFICAR SI YA EXISTE UN REGISTRO PARA HOY
+    // ✅ CORREGIDO: Usar fecha en timezone local de Honduras (UTC-6)
+    const now = new Date();
+    const today = new Date(now.getTime() - (6 * 60 * 60 * 1000)).toISOString().split('T')[0]; // UTC-6 para Honduras
+    console.log('📅 Fecha de hoy (UTC-6):', today);
+    console.log('🕐 Hora actual local:', now.toLocaleTimeString('es-HN'));
+
+    // ✅ CORREGIDO: Verificación más robusta de registro existente
     const existingRecord = await getQuery(
-      `SELECT id, entry_time, exit_time 
+      `SELECT id, entry_time, exit_time, date
        FROM attendance 
        WHERE employee_id = $1 AND date = $2`,
       [employee_id, today]
@@ -59,6 +64,9 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
 
     if (existingRecord) {
       console.log('ℹ️ Registro existente encontrado:', existingRecord);
+      
+      const entryTime = existingRecord.entry_time ? 
+        formatTimeForDisplay(existingRecord.entry_time) : '--:--';
       
       if (existingRecord.exit_time) {
         return res.status(400).json({
@@ -68,24 +76,29 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       } else {
         return res.status(400).json({
           success: false,
-          error: `El empleado ${employee.name} ya tiene una entrada registrada hoy a las ${formatTime(existingRecord.entry_time)}. Registre la salida primero.`
+          error: `El empleado ${employee.name} ya tiene una entrada registrada hoy a las ${entryTime}. Registre la salida primero.`
         });
       }
     }
 
-    // ✅ INSERTAR NUEVO REGISTRO (solo si no existe)
+    // ✅ CORREGIDO: Insertar con timezone correcto
     console.log('💾 Insertando nuevo registro de entrada...');
     
     const result = await runQuery(
       `INSERT INTO attendance (employee_id, date, entry_time) 
-       VALUES ($1, $2, CURRENT_TIME) 
+       VALUES ($1, $2, CURRENT_TIME AT TIME ZONE 'UTC-6') 
        RETURNING *`,
       [employee_id, today]
     );
 
     if (result && result.rows && result.rows[0]) {
       const newRecord = result.rows[0];
-      console.log('✅ Entrada registrada exitosamente:', newRecord);
+      console.log('✅ Entrada registrada exitosamente:', {
+        id: newRecord.id,
+        employee: employee.name,
+        date: newRecord.date,
+        entry_time: newRecord.entry_time
+      });
       
       res.json({
         success: true,
@@ -101,6 +114,24 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
     
     // ✅ MANEJO ESPECÍFICO PARA DUPLICADOS
     if (error.code === '23505') {
+      // Forzar verificación y obtener el registro existente
+      try {
+        const today = new Date(new Date().getTime() - (6 * 60 * 60 * 1000)).toISOString().split('T')[0];
+        const existing = await getQuery(
+          'SELECT * FROM attendance WHERE employee_id = $1 AND date = $2',
+          [req.body.employee_id, today]
+        );
+        
+        if (existing) {
+          return res.status(400).json({
+            success: false,
+            error: `Ya existe un registro para este empleado hoy. Entry: ${existing.entry_time}`
+          });
+        }
+      } catch (verifyError) {
+        console.error('Error en verificación de duplicado:', verifyError);
+      }
+      
       return res.status(400).json({
         success: false,
         error: 'Ya existe un registro de asistencia para este empleado hoy'
@@ -114,15 +145,30 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
   }
 });
 
-// Función auxiliar para formatear tiempo
-function formatTime(timeString) {
+// ✅ FUNCIÓN AUXILIAR MEJORADA para formatear tiempo
+function formatTimeForDisplay(timeString) {
   if (!timeString) return '--:--';
   try {
     if (typeof timeString === 'string') {
-      return timeString.substring(0, 5); // Extraer HH:MM
+      // Si es un string de tiempo PostgreSQL (HH:MM:SS)
+      if (timeString.match(/^\d{1,2}:\d{2}:\d{2}$/)) {
+        return timeString.substring(0, 5); // Extraer HH:MM
+      }
     }
+    
+    // Si es un objeto Date o string ISO
+    const date = new Date(timeString);
+    if (!isNaN(date.getTime())) {
+      return date.toLocaleTimeString('es-HN', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false 
+      });
+    }
+    
     return '--:--';
   } catch (error) {
+    console.error('Error formateando tiempo:', error);
     return '--:--';
   }
 }
