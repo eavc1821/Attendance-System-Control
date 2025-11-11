@@ -49,10 +49,7 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       });
     }
 
-    // ✅ SOLUCIÓN: Usar CURRENT_DATE de PostgreSQL (consistente)
-    console.log('🔄 Verificando registro existente...');
-
-    // ✅ USAR TRANSACCIÓN para evitar race conditions
+    // ✅ SOLUCIÓN MEJORADA: Usar UPSERT con ON CONFLICT
     if (process.env.NODE_ENV === 'production') {
       const { Pool } = require('pg');
       const pool = new Pool({
@@ -61,69 +58,77 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       });
       client = await pool.connect();
       
-      await client.query('BEGIN');
-      
-      // Verificar dentro de la transacción
-      const existingRecord = await client.query(
-        `SELECT id, entry_time, exit_time 
-         FROM attendance 
-         WHERE employee_id = $1 AND date = CURRENT_DATE
-         FOR UPDATE`, // 🔒 LOCK para prevenir race conditions
-        [employee_id]
-      );
+      try {
+        await client.query('BEGIN');
+        
+        console.log('🔄 Verificando/Insertando registro...');
+        
+        // ✅ USAR UPSERT para evitar condiciones de carrera
+        const result = await client.query(
+          `INSERT INTO attendance (employee_id, date, entry_time) 
+           VALUES ($1, CURRENT_DATE, CURRENT_TIME)
+           ON CONFLICT (employee_id, date) 
+           DO UPDATE SET 
+             entry_time = CASE 
+               WHEN attendance.exit_time IS NULL THEN attendance.entry_time
+               ELSE EXCLUDED.entry_time
+             END
+           RETURNING *, 
+             (xmax = 0) AS inserted`,
+          [employee_id]
+        );
 
-      if (existingRecord.rows.length > 0) {
-        const record = existingRecord.rows[0];
-        console.log('ℹ️ Registro existente encontrado:', record);
+        const record = result.rows[0];
+        const wasInserted = record.inserted;
         
-        const entryTime = record.entry_time ? 
-          record.entry_time.substring(0, 5) : '--:--';
-        
-        if (record.exit_time) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({
-            success: false,
-            error: `El empleado ${employee.name} ya completó su jornada hoy. No puede registrar otra entrada.`
-          });
-        } else {
-          await client.query('ROLLBACK');
-          return res.status(400).json({
-            success: false,
-            error: `El empleado ${employee.name} ya tiene una entrada registrada hoy a las ${entryTime}. Registre la salida primero.`
-          });
+        if (!wasInserted) {
+          // El registro ya existía
+          console.log('ℹ️ Registro existente encontrado:', record);
+          
+          if (record.exit_time) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              success: false,
+              error: `El empleado ${employee.name} ya completó su jornada hoy. No puede registrar otra entrada.`
+            });
+          } else {
+            const entryTime = record.entry_time ? 
+              record.entry_time.substring(0, 5) : '--:--';
+            
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              success: false,
+              error: `El empleado ${employee.name} ya tiene una entrada registrada hoy a las ${entryTime}. Registre la salida primero.`
+            });
+          }
         }
+
+        await client.query('COMMIT');
+        
+        console.log('✅ Entrada registrada exitosamente:', {
+          id: record.id,
+          employee: employee.name,
+          date: record.date,
+          entry_time: record.entry_time
+        });
+        
+        res.json({
+          success: true,
+          message: `Entrada registrada para ${employee.name}`,
+          data: record
+        });
+        
+      } catch (transactionError) {
+        await client.query('ROLLBACK');
+        throw transactionError;
+      } finally {
+        client.release();
       }
-
-      // ✅ INSERTAR con fecha/hora consistentes de PostgreSQL
-      console.log('💾 Insertando nuevo registro de entrada...');
-      
-      const result = await client.query(
-        `INSERT INTO attendance (employee_id, date, entry_time) 
-         VALUES ($1, CURRENT_DATE, CURRENT_TIME) 
-         RETURNING *`,
-        [employee_id]
-      );
-
-      await client.query('COMMIT');
-      
-      const newRecord = result.rows[0];
-      console.log('✅ Entrada registrada exitosamente:', {
-        id: newRecord.id,
-        employee: employee.name,
-        date: newRecord.date,
-        entry_time: newRecord.entry_time
-      });
-      
-      res.json({
-        success: true,
-        message: `Entrada registrada para ${employee.name}`,
-        data: newRecord
-      });
-      
     } else {
-      // SQLite (desarrollo)
+      // SQLite (desarrollo) - Solución similar
       const today = new Date().toISOString().split('T')[0];
       
+      // Verificar registro existente primero
       const existingRecord = await getQuery(
         `SELECT id, entry_time, exit_time 
          FROM attendance 
@@ -150,6 +155,7 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
         }
       }
 
+      // Insertar nuevo registro
       const result = await runQuery(
         `INSERT INTO attendance (employee_id, date, entry_time) 
          VALUES ($1, $2, TIME('now')) 
@@ -181,6 +187,36 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
     
     // Manejo específico de duplicados
     if (error.code === '23505') {
+      // ✅ MEJOR MANEJO: Consultar el estado actual del registro
+      try {
+        const existingRecord = await getQuery(
+          `SELECT a.*, e.name 
+           FROM attendance a 
+           JOIN employees e ON a.employee_id = e.id 
+           WHERE a.employee_id = $1 AND a.date = CURRENT_DATE`,
+          [employee_id]
+        );
+
+        if (existingRecord) {
+          if (existingRecord.exit_time) {
+            return res.status(400).json({
+              success: false,
+              error: `El empleado ${existingRecord.name} ya completó su jornada hoy. No puede registrar otra entrada.`
+            });
+          } else {
+            const entryTime = existingRecord.entry_time ? 
+              existingRecord.entry_time.substring(0, 5) : '--:--';
+            
+            return res.status(400).json({
+              success: false,
+              error: `El empleado ${existingRecord.name} ya tiene una entrada registrada hoy a las ${entryTime}. Registre la salida primero.`
+            });
+          }
+        }
+      } catch (queryError) {
+        console.error('Error consultando registro duplicado:', queryError);
+      }
+      
       return res.status(400).json({
         success: false,
         error: 'Ya existe un registro de asistencia para este empleado hoy'
