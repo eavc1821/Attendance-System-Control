@@ -152,13 +152,16 @@ router.post('/', authenticateToken, requireAdminOrScanner, upload.single('photo'
     }
 
     // Generar QR
-    const qrData = JSON.stringify({ 
-      id: Date.now(), 
-      name, 
-      dni, 
-      type 
-    });
-    const qrCode = qr.imageSync(qrData, { type: 'png' }).toString('base64');
+    // ✅ MEJORADO: Generar QR con estructura válida
+  const qrData = JSON.stringify({ 
+    employee_id: Date.now().toString(), // Usar timestamp como ID temporal
+    name: name.trim(),
+    dni: dni,
+    type: type
+  });
+  
+  console.log('📱 Datos del QR generados:', qrData);
+  const qrCode = qr.imageSync(qrData, { type: 'png' }).toString('base64');
 
     const photoPath = photoFile ? `/uploads/${photoFile.filename}` : null;
 
@@ -639,6 +642,49 @@ router.get('/:id/stats', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al obtener estadísticas del empleado: ' + error.message
+    });
+  }
+});
+
+// ✅ NUEVO ENDPOINT: Obtener información del empleado por ID para validación
+router.get('/qr-info/:employeeId', authenticateToken, async (req, res) => {
+  try {
+    const employeeId = req.params.employeeId;
+    
+    const employee = await getQuery(
+      'SELECT id, name, dni, type, is_active FROM employees WHERE id = $1',
+      [employeeId]
+    );
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        error: 'Empleado no encontrado'
+      });
+    }
+
+    if (!employee.is_active) {
+      return res.status(400).json({
+        success: false,
+        error: 'Empleado inactivo'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        employee_id: employee.id,
+        name: employee.name,
+        dni: employee.dni,
+        type: employee.type
+      }
+    });
+
+  } catch (error) {
+    console.error('Error obteniendo información del QR:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener información del empleado'
     });
   }
 });
