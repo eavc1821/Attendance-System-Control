@@ -11,6 +11,37 @@ const dbConfig = require('./config/database');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+const allowedOrigins = [
+  'https://gjd78.com',
+  'https://www.gjd78.com',
+  'https://attendance-system-control-production.up.railway.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:5000'
+];
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // En desarrollo, permitir todos los orígenes
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
+    // En producción, verificar contra la lista de orígenes permitidos
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('🚫 Origen bloqueado por CORS:', origin);
+      callback(new Error('No permitido por CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  optionsSuccessStatus: 200
+};
+
+
 // Security Middleware
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
@@ -24,17 +55,15 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 app.set('trust proxy', 1);
 
+// ✅ CORS MEJORADO - Colocar DESPUÉS de security middleware
+app.use(cors(corsOptions));
+
+// ✅ MANEJAR EXPLÍCITAMENTE PREFLIGHT REQUESTS
+app.options('*', cors(corsOptions));
+
 // ✅ SERVIR ARCHIVOS ESTÁTICOS - CRÍTICO PARA FOTOS
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.static(path.join(__dirname, 'public')));
-
-// CORS Configuration
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -47,7 +76,8 @@ app.get('/api/health', async (req, res) => {
       status: 'OK', 
       environment: process.env.NODE_ENV,
       database: dbHealth,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      allowedOrigins: allowedOrigins // Para debug
     });
   } catch (error) {
     res.status(500).json({
