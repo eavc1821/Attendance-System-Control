@@ -12,7 +12,7 @@ const getLocalDate = () => {
   return `${year}-${month}-${day}`;
 };
 
-A
+
 // POST /api/attendance/entry
 router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res) => {
   let client;
@@ -193,6 +193,7 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
     });
   }
 });
+
 
 // ✅ FUNCIÓN AUXILIAR MEJORADA para formatear tiempo
 function formatTimeForDisplay(timeString) {
