@@ -144,6 +144,7 @@ dbConfig.initializeDatabase().then(() => {
   const attendanceRoutes = require('./routes/attendance');
   const reportRoutes = require('./routes/reports');
   const dashboardRoutes = require('./routes/dashboard');
+  const devRoutes = require('./routes/dev');
 
   app.use('/api/auth', authRoutes);
   app.use('/api/employees', employeeRoutes);
@@ -151,6 +152,7 @@ dbConfig.initializeDatabase().then(() => {
   app.use('/api/attendance', attendanceRoutes);
   app.use('/api/reports', reportRoutes);
   app.use('/api/dashboard', dashboardRoutes);
+  app.use('/api/dev', devRoutes);
 
   // Manejo de errores 404
   app.use('*', (req, res) => {
