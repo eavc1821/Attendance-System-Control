@@ -12,97 +12,120 @@ const getLocalDate = () => {
   return `${year}-${month}-${day}`;
 };
 
-// POST /api/attendance/entry - CORREGIDO
+
+// POST /api/attendance/entry - MEJORADO CON MANEJO DE DUPLICADOS
 router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res) => {
   try {
+    console.log('📥 POST /api/attendance/entry - Body:', req.body);
+    
     const { employee_id } = req.body;
-    const today = getLocalDate();
-
-    console.log('📥 Recibiendo solicitud de entrada:', { employee_id, today });
 
     if (!employee_id) {
       return res.status(400).json({
         success: false,
-        error: 'ID de empleado es requerido'
+        error: 'employee_id es requerido'
       });
     }
 
-    // ✅ CORREGIDO: ? → $1, is_active = 1 → is_active = true
+    // Verificar que el empleado existe y está activo
     const employee = await getQuery(
-      'SELECT id, name, type FROM employees WHERE id = $1 AND is_active = true',
+      'SELECT id, name, is_active FROM employees WHERE id = $1',
       [employee_id]
     );
 
     if (!employee) {
       return res.status(404).json({
         success: false,
-        error: 'Empleado no encontrado o inactivo'
+        error: 'Empleado no encontrado'
       });
     }
 
-    // ✅ CORREGIDO: ? → $1, $2
+    if (!employee.is_active) {
+      return res.status(400).json({
+        success: false,
+        error: 'Este empleado está inactivo'
+      });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    
+    // ✅ VERIFICAR SI YA EXISTE UN REGISTRO PARA HOY
     const existingRecord = await getQuery(
-      'SELECT id, exit_time FROM attendance WHERE employee_id = $1 AND date = $2',
+      `SELECT id, entry_time, exit_time 
+       FROM attendance 
+       WHERE employee_id = $1 AND date = $2`,
       [employee_id, today]
     );
 
     if (existingRecord) {
-      if (!existingRecord.exit_time) {
+      console.log('ℹ️ Registro existente encontrado:', existingRecord);
+      
+      if (existingRecord.exit_time) {
         return res.status(400).json({
           success: false,
-          error: 'Ya existe una entrada activa para hoy. Registre la salida primero.'
+          error: `El empleado ${employee.name} ya completó su jornada hoy. No puede registrar otra entrada.`
         });
       } else {
         return res.status(400).json({
           success: false,
-          error: 'El empleado ya completó su jornada hoy. No puede registrar otra entrada.'
+          error: `El empleado ${employee.name} ya tiene una entrada registrada hoy a las ${formatTime(existingRecord.entry_time)}. Registre la salida primero.`
         });
       }
     }
 
-    const now = new Date();
-    const entryTime = now.toLocaleTimeString('es-HN', { 
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    });
+    // ✅ INSERTAR NUEVO REGISTRO (solo si no existe)
+    console.log('💾 Insertando nuevo registro de entrada...');
     
-    const entryDateTime = now.toISOString();
-
-    console.log('⏰ Registrando entrada:', { entryTime, entryDateTime });
-
-    // ✅ CORREGIDO: ? → $1, $2, $3, $4
     const result = await runQuery(
-      'INSERT INTO attendance (employee_id, date, entry_time, created_at) VALUES ($1, $2, $3, $4)',
-      [employee_id, today, entryTime, entryDateTime]
+      `INSERT INTO attendance (employee_id, date, entry_time) 
+       VALUES ($1, $2, CURRENT_TIME) 
+       RETURNING *`,
+      [employee_id, today]
     );
 
-    console.log('✅ Entrada registrada con ID:', result.id);
-
-    res.status(201).json({
-      success: true,
-      message: `✅ Entrada registrada exitosamente para ${employee.name} a las ${entryTime}`,
-      data: {
-        id: result.id,
-        employee_id,
-        employee_name: employee.name,
-        employee_type: employee.type,
-        date: today,
-        entry_time: entryTime,
-        entry_datetime: entryDateTime,
-        status: 'active'
-      }
-    });
+    if (result && result.rows && result.rows[0]) {
+      const newRecord = result.rows[0];
+      console.log('✅ Entrada registrada exitosamente:', newRecord);
+      
+      res.json({
+        success: true,
+        message: `Entrada registrada para ${employee.name}`,
+        data: newRecord
+      });
+    } else {
+      throw new Error('No se pudo recuperar el registro creado');
+    }
 
   } catch (error) {
     console.error('❌ Error registrando entrada:', error);
+    
+    // ✅ MANEJO ESPECÍFICO PARA DUPLICADOS
+    if (error.code === '23505') {
+      return res.status(400).json({
+        success: false,
+        error: 'Ya existe un registro de asistencia para este empleado hoy'
+      });
+    }
+    
     res.status(500).json({
       success: false,
-      error: 'Error interno del servidor al registrar entrada'
+      error: 'Error al registrar entrada: ' + error.message
     });
   }
 });
+
+// Función auxiliar para formatear tiempo
+function formatTime(timeString) {
+  if (!timeString) return '--:--';
+  try {
+    if (typeof timeString === 'string') {
+      return timeString.substring(0, 5); // Extraer HH:MM
+    }
+    return '--:--';
+  } catch (error) {
+    return '--:--';
+  }
+}
 
 // POST /api/attendance/exit - CORREGIDO
 router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) => {
