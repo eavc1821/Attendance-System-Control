@@ -4,16 +4,28 @@ const { authenticateToken, requireAdminOrScanner } = require('../middleware/auth
 
 const router = express.Router();
 
-const getLocalDate = () => {
+// ✅ CORREGIDO: Función mejorada para obtener fecha/hora local
+const getLocalDateTime = () => {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  
+  // Ajustar a zona horaria de América Central (UTC-6)
+  const offset = -6 * 60; // UTC-6 en minutos
+  const localTime = new Date(now.getTime() + offset * 60 * 1000);
+  
+  const year = localTime.getUTCFullYear();
+  const month = String(localTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(localTime.getUTCDate()).padStart(2, '0');
+  const hours = String(localTime.getUTCHours()).padStart(2, '0');
+  const minutes = String(localTime.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(localTime.getUTCSeconds()).padStart(2, '0');
+  
+  return {
+    date: `${year}-${month}-${day}`,
+    time: `${hours}:${minutes}:${seconds}`
+  };
 };
 
-
-// POST /api/attendance/entry
+// POST /api/attendance/entry - CORREGIDO
 router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res) => {
   let client;
   
@@ -49,7 +61,10 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       });
     }
 
-    // ✅ SOLUCIÓN MEJORADA: Usar UPSERT con ON CONFLICT
+    // ✅ USAR FECHA/HORA LOCAL CORREGIDA
+    const { date: today, time: currentTime } = getLocalDateTime();
+    console.log('🕐 Fecha/hora local:', today, currentTime);
+
     if (process.env.NODE_ENV === 'production') {
       const { Pool } = require('pg');
       const pool = new Pool({
@@ -61,29 +76,20 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       try {
         await client.query('BEGIN');
         
-        console.log('🔄 Verificando/Insertando registro...');
-        
-        // ✅ USAR UPSERT para evitar condiciones de carrera
-        const result = await client.query(
-          `INSERT INTO attendance (employee_id, date, entry_time) 
-           VALUES ($1, CURRENT_DATE, CURRENT_TIME)
-           ON CONFLICT (employee_id, date) 
-           DO UPDATE SET 
-             entry_time = CASE 
-               WHEN attendance.exit_time IS NULL THEN attendance.entry_time
-               ELSE EXCLUDED.entry_time
-             END
-           RETURNING *, 
-             (xmax = 0) AS inserted`,
-          [employee_id]
+        // ✅ VERIFICAR EXISTENCIA CON FECHA LOCAL
+        const existingRecord = await client.query(
+          `SELECT id, entry_time, exit_time 
+           FROM attendance 
+           WHERE employee_id = $1 AND date = $2`,
+          [employee_id, today]
         );
 
-        const record = result.rows[0];
-        const wasInserted = record.inserted;
-        
-        if (!wasInserted) {
-          // El registro ya existía
+        if (existingRecord.rows.length > 0) {
+          const record = existingRecord.rows[0];
           console.log('ℹ️ Registro existente encontrado:', record);
+          
+          const entryTime = record.entry_time ? 
+            formatTimeForDisplay(record.entry_time) : '--:--';
           
           if (record.exit_time) {
             await client.query('ROLLBACK');
@@ -92,9 +98,6 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
               error: `El empleado ${employee.name} ya completó su jornada hoy. No puede registrar otra entrada.`
             });
           } else {
-            const entryTime = record.entry_time ? 
-              record.entry_time.substring(0, 5) : '--:--';
-            
             await client.query('ROLLBACK');
             return res.status(400).json({
               success: false,
@@ -103,19 +106,30 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
           }
         }
 
+        // ✅ INSERTAR CON FECHA/HORA LOCAL EXPLÍCITA
+        console.log('💾 Insertando nuevo registro de entrada...');
+        
+        const result = await client.query(
+          `INSERT INTO attendance (employee_id, date, entry_time) 
+           VALUES ($1, $2, $3) 
+           RETURNING *`,
+          [employee_id, today, currentTime]
+        );
+
         await client.query('COMMIT');
         
+        const newRecord = result.rows[0];
         console.log('✅ Entrada registrada exitosamente:', {
-          id: record.id,
+          id: newRecord.id,
           employee: employee.name,
-          date: record.date,
-          entry_time: record.entry_time
+          date: newRecord.date,
+          entry_time: newRecord.entry_time
         });
         
         res.json({
           success: true,
-          message: `Entrada registrada para ${employee.name}`,
-          data: record
+          message: `Entrada registrada para ${employee.name} a las ${formatTimeForDisplay(currentTime)}`,
+          data: newRecord
         });
         
       } catch (transactionError) {
@@ -125,10 +139,9 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
         client.release();
       }
     } else {
-      // SQLite (desarrollo) - Solución similar
-      const today = new Date().toISOString().split('T')[0];
+      // SQLite (desarrollo)
+      const { date: today, time: currentTime } = getLocalDateTime();
       
-      // Verificar registro existente primero
       const existingRecord = await getQuery(
         `SELECT id, entry_time, exit_time 
          FROM attendance 
@@ -140,7 +153,7 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
         console.log('ℹ️ Registro existente encontrado:', existingRecord);
         
         const entryTime = existingRecord.entry_time ? 
-          existingRecord.entry_time.substring(0, 5) : '--:--';
+          formatTimeForDisplay(existingRecord.entry_time) : '--:--';
         
         if (existingRecord.exit_time) {
           return res.status(400).json({
@@ -155,19 +168,19 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
         }
       }
 
-      // Insertar nuevo registro
+      // ✅ USAR FECHA/HORA LOCAL PARA SQLITE
       const result = await runQuery(
         `INSERT INTO attendance (employee_id, date, entry_time) 
-         VALUES ($1, $2, TIME('now')) 
+         VALUES ($1, $2, $3) 
          RETURNING *`,
-        [employee_id, today]
+        [employee_id, today, currentTime]
       );
 
       console.log('✅ Entrada registrada exitosamente');
       
       res.json({
         success: true,
-        message: `Entrada registrada para ${employee.name}`,
+        message: `Entrada registrada para ${employee.name} a las ${formatTimeForDisplay(currentTime)}`,
         data: result
       });
     }
@@ -187,14 +200,15 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
     
     // Manejo específico de duplicados
     if (error.code === '23505') {
-      // ✅ MEJOR MANEJO: Consultar el estado actual del registro
+      // ✅ CONSULTAR REGISTRO EXISTENTE CON FECHA LOCAL
+      const { date: today } = getLocalDateTime();
       try {
         const existingRecord = await getQuery(
           `SELECT a.*, e.name 
            FROM attendance a 
            JOIN employees e ON a.employee_id = e.id 
-           WHERE a.employee_id = $1 AND a.date = CURRENT_DATE`,
-          [employee_id]
+           WHERE a.employee_id = $1 AND a.date = $2`,
+          [employee_id, today]
         );
 
         if (existingRecord) {
@@ -205,7 +219,7 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
             });
           } else {
             const entryTime = existingRecord.entry_time ? 
-              existingRecord.entry_time.substring(0, 5) : '--:--';
+              formatTimeForDisplay(existingRecord.entry_time) : '--:--';
             
             return res.status(400).json({
               success: false,
@@ -230,43 +244,16 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
   }
 });
 
-
-// ✅ FUNCIÓN AUXILIAR MEJORADA para formatear tiempo
-function formatTimeForDisplay(timeString) {
-  if (!timeString) return '--:--';
-  try {
-    if (typeof timeString === 'string') {
-      // Si es un string de tiempo PostgreSQL (HH:MM:SS)
-      if (timeString.match(/^\d{1,2}:\d{2}:\d{2}$/)) {
-        return timeString.substring(0, 5); // Extraer HH:MM
-      }
-    }
-    
-    // Si es un objeto Date o string ISO
-    const date = new Date(timeString);
-    if (!isNaN(date.getTime())) {
-      return date.toLocaleTimeString('es-HN', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        hour12: false 
-      });
-    }
-    
-    return '--:--';
-  } catch (error) {
-    console.error('Error formateando tiempo:', error);
-    return '--:--';
-  }
-}
-
-// POST /api/attendance/exit - CORREGIDO
+// POST /api/attendance/exit - CORREGIDO CON ZONA HORARIA
 router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) => {
   console.log('🚨 ===== INICIANDO REGISTRO DE SALIDA =====');
   console.log('📥 DATOS RECIBIDOS:', JSON.stringify(req.body, null, 2));
 
   try {
     const { employee_id, hours_extra = 0, despalillo = 0, escogida = 0, monado = 0 } = req.body;
-    const today = getLocalDate();
+    
+    // ✅ USAR FECHA LOCAL CORREGIDA
+    const { date: today, time: exitTime } = getLocalDateTime();
 
     if (!employee_id) {
       return res.status(400).json({
@@ -283,7 +270,6 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
       });
     }
 
-    // ✅ CORREGIDO: ? → $1
     const employee = await getQuery(
       'SELECT id, name, type, is_active FROM employees WHERE id = $1',
       [employeeIdNum]
@@ -303,7 +289,7 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
       });
     }
 
-    // ✅ CORREGIDO: ? → $1, $2
+    // ✅ USAR FECHA LOCAL EN LA CONSULTA
     const attendanceRecord = await getQuery(
       `SELECT a.*, e.name, e.type 
        FROM attendance a 
@@ -339,16 +325,8 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
       septimo_dia = total_produccion * 0.181818;
     }
 
-    const exitTime = new Date().toLocaleTimeString('es-HN', { 
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    });
-
     console.log('🔄 Ejecutando UPDATE...');
     
-    // ✅ CORREGIDO: ? → $1, $2, etc.
     const updateResult = await runQuery(
       `UPDATE attendance 
        SET exit_time = $1, 
@@ -381,7 +359,7 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
 
     res.json({
       success: true,
-      message: `✅ Salida registrada exitosamente para ${employee.name} a las ${exitTime}`,
+      message: `✅ Salida registrada exitosamente para ${employee.name} a las ${formatTimeForDisplay(exitTime)}`,
       data: {
         employee_id: employeeIdNum,
         employee_name: employee.name,
@@ -412,25 +390,28 @@ router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) 
   }
 });
 
-// GET /api/attendance/today - CORREGIDO
+// GET /api/attendance/today - CORREGIDO CON ZONA HORARIA
 router.get('/today', authenticateToken, async (req, res) => {
   try {
     console.log('📅 Obteniendo registros de hoy...');
     
-    // ✅ USAR CURRENT_DATE de PostgreSQL (timezone del servidor)
-    const records = await allQuery(`
-      SELECT 
+    // ✅ USAR FECHA LOCAL
+    const { date: today } = getLocalDateTime();
+    
+    const records = await allQuery(
+      `SELECT 
         a.*,
         e.name as employee_name,
         e.dni as employee_dni, 
         e.type as employee_type
       FROM attendance a
       JOIN employees e ON a.employee_id = e.id
-      WHERE a.date = CURRENT_DATE
-      ORDER BY a.entry_time DESC
-    `);
+      WHERE a.date = $1
+      ORDER BY a.entry_time DESC`,
+      [today]
+    );
 
-    console.log(`✅ Encontrados ${records.length} registros para hoy`);
+    console.log(`✅ Encontrados ${records.length} registros para hoy (${today})`);
     
     res.json({
       success: true,
@@ -447,4 +428,32 @@ router.get('/today', authenticateToken, async (req, res) => {
   }
 });
 
-module.exports = router;                
+// ✅ FUNCIÓN AUXILIAR MEJORADA para formatear tiempo
+function formatTimeForDisplay(timeString) {
+  if (!timeString) return '--:--';
+  try {
+    if (typeof timeString === 'string') {
+      // Si es un string de tiempo (HH:MM:SS)
+      if (timeString.match(/^\d{1,2}:\d{2}:\d{2}$/)) {
+        return timeString.substring(0, 5); // Extraer HH:MM
+      }
+    }
+    
+    // Si es un objeto Date o string ISO
+    const date = new Date(timeString);
+    if (!isNaN(date.getTime())) {
+      return date.toLocaleTimeString('es-HN', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false 
+      });
+    }
+    
+    return '--:--';
+  } catch (error) {
+    console.error('Error formateando tiempo:', error);
+    return '--:--';
+  }
+}
+
+module.exports = router;
