@@ -10,6 +10,9 @@ const employeesRoutes = require('./routes/employees');
 const attendanceRoutes = require('./routes/attendance');
 const reportsRoutes = require('./routes/reports');
 const authRoutes = require('./routes/auth');
+const usersRoutes = require('./routes/users');
+const dashboardRoutes = require('./routes/dashboard');
+
 
 
 // Inicializar app Express
@@ -48,6 +51,9 @@ app.use('/api/employees', employeesRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/users', usersRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+
 
 // Health check
 app.get('/', (req, res) => {
