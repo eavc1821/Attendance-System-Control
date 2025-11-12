@@ -63,30 +63,6 @@ app.use('/uploads', (req, res, next) => {
   }
 });
 
-// ⚠️ SOLO PARA EJECUTAR UNA VEZ - ELIMINAR DESPUÉS
-const { Pool } = require('pg');
-const pool = new Pool({
-  host: process.env.PGHOST,
-  port: process.env.PGPORT,
-  user: process.env.PGUSER,
-  password: process.env.PGPASSWORD,
-  database: process.env.PGDATABASE,
-  ssl: { rejectUnauthorized: false },
-});
-
-app.get('/api/fix/attendance-columns', async (req, res) => {
-  try {
-    await pool.query(`
-      ALTER TABLE attendance ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-      ALTER TABLE attendance ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-    `);
-    res.json({ success: true, message: 'Columnas creadas correctamente ✅' });
-  } catch (error) {
-    console.error('❌ Error ejecutando SQL:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 
 // Health check
 app.get('/', (req, res) => {
