@@ -329,4 +329,64 @@ function formatTimeForDisplay(timeString) {
   }
 }
 
+// GET /api/attendance/today - RUTA CORREGIDA
+router.get('/today', authenticateToken, async (req, res) => {
+  try {
+    console.log('📅 Obteniendo registros de hoy...');
+    
+    let records;
+    let today;
+
+    if (process.env.NODE_ENV === 'production') {
+      // PostgreSQL
+      records = await allQuery(`
+        SELECT 
+          a.*,
+          e.name as employee_name,
+          e.dni as employee_dni, 
+          e.type as employee_type
+        FROM attendance a
+        JOIN employees e ON a.employee_id = e.id
+        WHERE a.date = CURRENT_DATE
+        ORDER BY a.entry_time DESC
+      `);
+      
+      // Obtener fecha actual para el mensaje
+      const dateResult = await getQuery('SELECT CURRENT_DATE as today');
+      today = dateResult.today;
+    } else {
+      // SQLite
+      today = new Date().toISOString().split('T')[0];
+      records = await allQuery(
+        `SELECT 
+          a.*,
+          e.name as employee_name,
+          e.dni as employee_dni, 
+          e.type as employee_type
+        FROM attendance a
+        JOIN employees e ON a.employee_id = e.id
+        WHERE a.date = $1
+        ORDER BY a.entry_time DESC`,
+        [today]
+      );
+    }
+
+    console.log(`✅ Encontrados ${records.length} registros para hoy (${today})`);
+    
+    res.json({
+      success: true,
+      data: records,
+      count: records.length,
+      current_date: today
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo registros de hoy:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener registros de hoy: ' + error.message
+    });
+  }
+});
+
 module.exports = router;
