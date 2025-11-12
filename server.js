@@ -9,6 +9,8 @@ const path = require('path');
 const employeesRoutes = require('./routes/employees');
 const attendanceRoutes = require('./routes/attendance');
 const reportsRoutes = require('./routes/reports');
+const authRoutes = require('./routes/auth');
+
 
 // Inicializar app Express
 const app = express();
@@ -45,6 +47,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/employees', employeesRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/reports', reportsRoutes);
+app.use('/api/auth', authRoutes);
 
 // Health check
 app.get('/', (req, res) => {
