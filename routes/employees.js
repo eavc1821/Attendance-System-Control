@@ -108,7 +108,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-
 // Actualizar empleado
 router.put('/:id', upload.single('photo'), async (req, res) => {
   try {
@@ -153,5 +152,33 @@ router.put('/:id', upload.single('photo'), async (req, res) => {
     res.status(500).json({ success: false, message: 'Error actualizando empleado' });
   }
 });
+
+// Obtener estadísticas individuales del empleado (para asistencia)
+router.get('/:id/stats', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await allQuery(`
+      SELECT 
+        e.id, e.name, e.type, e.dni,
+        COUNT(a.id) AS total_attendance,
+        SUM(CASE WHEN a.exit_time IS NULL THEN 1 ELSE 0 END) AS pending_exits
+      FROM employees e
+      LEFT JOIN attendance a ON e.id = a.employee_id
+      WHERE e.id = $1
+      GROUP BY e.id, e.name, e.type, e.dni
+    `, [id]);
+
+    if (!result.length) {
+      return res.status(404).json({ success: false, message: 'Empleado no encontrado' });
+    }
+
+    res.status(200).json({ success: true, data: result[0] });
+  } catch (error) {
+    console.error('❌ Error obteniendo estadísticas del empleado:', error);
+    res.status(500).json({ success: false, message: 'Error obteniendo estadísticas', error: error.message });
+  }
+});
+
 
 module.exports = router;
