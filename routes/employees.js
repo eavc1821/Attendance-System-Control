@@ -79,15 +79,35 @@ router.post('/', upload.single('photo'), async (req, res) => {
 // Obtener todos los empleados
 router.get('/', async (req, res) => {
   try {
-    const employees = await getQuery(
-      'SELECT id, name, dni, type, monthly_salary, photo, qr_code, is_active FROM employees ORDER BY id ASC'
-    );
-    res.json({ success: true, data: employees });
+    const employees = await allQuery(`
+      SELECT 
+        id, 
+        name, 
+        dni, 
+        type, 
+        monthly_salary, 
+        photo, 
+        qr_code, 
+        is_active 
+      FROM employees 
+      ORDER BY id ASC
+    `);
+
+    res.status(200).json({
+      success: true,
+      data: employees || [],
+      count: employees?.length || 0
+    });
   } catch (error) {
     console.error('❌ Error obteniendo empleados:', error);
-    res.status(500).json({ success: false, message: 'Error obteniendo empleados' });
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener empleados',
+      error: error.message
+    });
   }
 });
+
 
 // Actualizar empleado
 router.put('/:id', upload.single('photo'), async (req, res) => {
