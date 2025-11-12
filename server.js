@@ -12,7 +12,7 @@ const reportsRoutes = require('./routes/reports');
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
 const dashboardRoutes = require('./routes/dashboard');
-
+const uploadsPath = path.join(__dirname, 'uploads');
 
 
 // Inicializar app Express
@@ -53,6 +53,15 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+
+app.use('/uploads', (req, res, next) => {
+  const filePath = path.join(uploadsPath, req.path);
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).json({ success: false, message: 'Archivo no encontrado' });
+  }
+});
 
 
 // Health check

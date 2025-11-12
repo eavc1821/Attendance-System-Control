@@ -181,4 +181,38 @@ router.get('/:id/stats', async (req, res) => {
 });
 
 
+// 📦 Descargar QR del empleado
+router.get('/:id/qr', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await getQuery(
+      'SELECT name, dni, qr_code FROM employees WHERE id = $1',
+      [id]
+    );
+
+    if (!result) {
+      return res.status(404).json({ success: false, message: 'Empleado no encontrado' });
+    }
+
+    const { name, dni, qr_code } = result;
+
+    if (!qr_code) {
+      return res.status(404).json({ success: false, message: 'El empleado no tiene QR generado' });
+    }
+
+    // Convertir base64 a buffer y enviar como imagen
+    const buffer = Buffer.from(qr_code, 'base64');
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Disposition': `attachment; filename="qr-${dni}.png"`,
+      'Content-Length': buffer.length
+    });
+    res.end(buffer);
+  } catch (error) {
+    console.error('❌ Error descargando QR:', error);
+    res.status(500).json({ success: false, message: 'Error descargando QR', error: error.message });
+  }
+});
+
+
 module.exports = router;
