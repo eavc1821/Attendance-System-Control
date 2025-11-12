@@ -4,32 +4,67 @@ const { authenticateToken, requireAdminOrScanner } = require('../middleware/auth
 
 const router = express.Router();
 
-// ✅ SOLUCIÓN DEFINITIVA: Usar PostgreSQL con conversión de zona horaria
-const getLocalDate = () => {
-  if (process.env.NODE_ENV === 'production') {
-    // En producción, PostgreSQL manejará la conversión de zona horaria
-    return 'CURRENT_DATE';
-  } else {
-    // Desarrollo con SQLite
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `'${year}-${month}-${day}'`;
-  }
-};
+// ✅ CACHE PARA PREVENIR REQUESTS DUPLICADOS DESDE EL MÓVIL
+const pendingRequests = new Map();
+const REQUEST_TIMEOUT = 3000; // 3 segundos
 
-// ✅ FUNCIÓN PARA OBTENER HORA LOCAL FORMATEADA
-const getLocalTime = () => {
+// ✅ FUNCIÓN SIMPLIFICADA PARA FECHA/HORA LOCAL
+const getCurrentLocalDateTime = () => {
   const now = new Date();
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  const seconds = String(now.getSeconds()).padStart(2, '0');
-  return `${hours}:${minutes}:${seconds}`;
+  
+  // Para América Central (UTC-6)
+  const localTime = new Date(now.getTime() - (6 * 60 * 60 * 1000));
+  
+  const year = localTime.getUTCFullYear();
+  const month = String(localTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(localTime.getUTCDate()).padStart(2, '0');
+  const hours = String(localTime.getUTCHours()).padStart(2, '0');
+  const minutes = String(localTime.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(localTime.getUTCSeconds()).padStart(2, '0');
+  
+  return {
+    date: `${year}-${month}-${day}`,
+    time: `${hours}:${minutes}:${seconds}`,
+    displayTime: `${hours}:${minutes}`
+  };
 };
 
-// POST /api/attendance/entry - SOLUCIÓN DEFINITIVA
-router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res) => {
+// ✅ MIDDLEWARE PARA PREVENIR DUPLICADOS
+const preventDuplicateRequests = (req, res, next) => {
+  const { employee_id } = req.body;
+  const requestKey = `${employee_id}-${Date.now()}`;
+  
+  // Limpiar requests antiguos
+  const now = Date.now();
+  for (const [key, timestamp] of pendingRequests.entries()) {
+    if (now - timestamp > REQUEST_TIMEOUT) {
+      pendingRequests.delete(key);
+    }
+  }
+  
+  // Verificar si ya hay un request pendiente para este empleado
+  for (const [key] of pendingRequests.entries()) {
+    if (key.startsWith(employee_id)) {
+      return res.status(429).json({
+        success: false,
+        error: 'Request duplicado detectado. Espere un momento.'
+      });
+    }
+  }
+  
+  pendingRequests.set(requestKey, now);
+  req.requestKey = requestKey;
+  
+  // Limpiar después de timeout
+  setTimeout(() => {
+    pendingRequests.delete(requestKey);
+  }, REQUEST_TIMEOUT);
+  
+  next();
+};
+
+// POST /api/attendance/entry - SOLUCIÓN COMPLETA
+router.post('/entry', authenticateToken, requireAdminOrScanner, preventDuplicateRequests, async (req, res) => {
   let client;
   
   try {
@@ -38,6 +73,7 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
     const { employee_id } = req.body;
 
     if (!employee_id) {
+      pendingRequests.delete(req.requestKey);
       return res.status(400).json({
         success: false,
         error: 'employee_id es requerido'
@@ -51,6 +87,7 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
     );
 
     if (!employee) {
+      pendingRequests.delete(req.requestKey);
       return res.status(404).json({
         success: false,
         error: 'Empleado no encontrado'
@@ -58,11 +95,15 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
     }
 
     if (!employee.is_active) {
+      pendingRequests.delete(req.requestKey);
       return res.status(400).json({
         success: false,
         error: 'Este empleado está inactivo'
       });
     }
+
+    const { date: today, time: currentTime, displayTime } = getCurrentLocalDateTime();
+    console.log('🕐 Fecha/hora local calculada:', { today, currentTime, displayTime });
 
     if (process.env.NODE_ENV === 'production') {
       const { Pool } = require('pg');
@@ -77,65 +118,67 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
         
         console.log('🔄 Verificando registro existente...');
         
-        // ✅ USAR CONVERSIÓN DE ZONA HORARIA EN POSTGRESQL
+        // ✅ CONSULTA MÁS ROBUSTA CON ZONA HORARIA
         const existingRecord = await client.query(
           `SELECT id, entry_time, exit_time 
            FROM attendance 
-           WHERE employee_id = $1 AND date = (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date`,
-          [employee_id]
+           WHERE employee_id = $1 AND date = $2`,
+          [employee_id, today]
         );
 
         if (existingRecord.rows.length > 0) {
           const record = existingRecord.rows[0];
           console.log('ℹ️ Registro existente encontrado:', record);
           
-          // ✅ FORMATEAR HORA PARA MOSTRAR CORRECTAMENTE
-          const entryTime = record.entry_time ? 
+          const existingEntryTime = record.entry_time ? 
             formatTimeForDisplay(record.entry_time) : '--:--';
           
+          await client.query('ROLLBACK');
+          pendingRequests.delete(req.requestKey);
+          
           if (record.exit_time) {
-            await client.query('ROLLBACK');
             return res.status(400).json({
               success: false,
               error: `El empleado ${employee.name} ya completó su jornada hoy. No puede registrar otra entrada.`
             });
           } else {
-            await client.query('ROLLBACK');
             return res.status(400).json({
               success: false,
-              error: `El empleado ${employee.name} ya tiene una entrada registrada hoy a las ${entryTime}. Registre la salida primero.`
+              error: `El empleado ${employee.name} ya tiene una entrada registrada hoy a las ${existingEntryTime}. Registre la salida primero.`
             });
           }
         }
 
-        // ✅ INSERTAR CON ZONA HORARIA CORRECTA
+        // ✅ INSERTAR CON FECHA/HORA EXPLÍCITAS
         console.log('💾 Insertando nuevo registro de entrada...');
         
         const result = await client.query(
           `INSERT INTO attendance (employee_id, date, entry_time) 
-           VALUES ($1, (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date, 
-                   (CURRENT_TIME AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::time) 
+           VALUES ($1, $2, $3) 
            RETURNING *`,
-          [employee_id]
+          [employee_id, today, currentTime]
         );
 
         await client.query('COMMIT');
         
         const newRecord = result.rows[0];
-        const displayTime = formatTimeForDisplay(newRecord.entry_time);
-        
         console.log('✅ Entrada registrada exitosamente:', {
           id: newRecord.id,
           employee: employee.name,
           date: newRecord.date,
-          entry_time: newRecord.entry_time,
-          display_time: displayTime
+          entry_time: newRecord.entry_time
         });
+        
+        pendingRequests.delete(req.requestKey);
         
         res.json({
           success: true,
           message: `Entrada registrada para ${employee.name} a las ${displayTime}`,
-          data: newRecord
+          data: {
+            ...newRecord,
+            formatted_entry_time: displayTime, // ✅ HORA FORMATEADA PARA FRONTEND
+            employee_name: employee.name
+          }
         });
         
       } catch (transactionError) {
@@ -146,9 +189,6 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       }
     } else {
       // SQLite (desarrollo)
-      const today = new Date().toISOString().split('T')[0];
-      const currentTime = getLocalTime();
-      
       const existingRecord = await getQuery(
         `SELECT id, entry_time, exit_time 
          FROM attendance 
@@ -159,8 +199,10 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
       if (existingRecord) {
         console.log('ℹ️ Registro existente encontrado:', existingRecord);
         
-        const entryTime = existingRecord.entry_time ? 
+        const existingEntryTime = existingRecord.entry_time ? 
           formatTimeForDisplay(existingRecord.entry_time) : '--:--';
+        
+        pendingRequests.delete(req.requestKey);
         
         if (existingRecord.exit_time) {
           return res.status(400).json({
@@ -170,7 +212,7 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
         } else {
           return res.status(400).json({
             success: false,
-            error: `El empleado ${employee.name} ya tiene una entrada registrada hoy a las ${entryTime}. Registre la salida primero.`
+            error: `El empleado ${employee.name} ya tiene una entrada registrada hoy a las ${existingEntryTime}. Registre la salida primero.`
           });
         }
       }
@@ -184,15 +226,24 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
 
       console.log('✅ Entrada registrada exitosamente');
       
+      pendingRequests.delete(req.requestKey);
+      
       res.json({
         success: true,
-        message: `Entrada registrada para ${employee.name} a las ${formatTimeForDisplay(currentTime)}`,
-        data: result
+        message: `Entrada registrada para ${employee.name} a las ${displayTime}`,
+        data: {
+          ...result,
+          formatted_entry_time: displayTime, // ✅ HORA FORMATEADA PARA FRONTEND
+          employee_name: employee.name
+        }
       });
     }
 
   } catch (error) {
     console.error('❌ Error registrando entrada:', error);
+    
+    // Limpiar request pendiente
+    pendingRequests.delete(req.requestKey);
     
     // Rollback en caso de error
     if (client) {
@@ -206,6 +257,37 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
     
     // Manejo específico de duplicados
     if (error.code === '23505') {
+      // Consultar el estado actual
+      const { date: today } = getCurrentLocalDateTime();
+      try {
+        const existingRecord = await getQuery(
+          `SELECT a.*, e.name 
+           FROM attendance a 
+           JOIN employees e ON a.employee_id = e.id 
+           WHERE a.employee_id = $1 AND a.date = $2`,
+          [employee_id, today]
+        );
+
+        if (existingRecord) {
+          const existingEntryTime = existingRecord.entry_time ? 
+            formatTimeForDisplay(existingRecord.entry_time) : '--:--';
+            
+          if (existingRecord.exit_time) {
+            return res.status(400).json({
+              success: false,
+              error: `El empleado ${existingRecord.name} ya completó su jornada hoy. No puede registrar otra entrada.`
+            });
+          } else {
+            return res.status(400).json({
+              success: false,
+              error: `El empleado ${existingRecord.name} ya tiene una entrada registrada hoy a las ${existingEntryTime}. Registre la salida primero.`
+            });
+          }
+        }
+      } catch (queryError) {
+        console.error('Error consultando registro duplicado:', queryError);
+      }
+      
       return res.status(400).json({
         success: false,
         error: 'Ya existe un registro de asistencia para este empleado hoy'
@@ -215,237 +297,6 @@ router.post('/entry', authenticateToken, requireAdminOrScanner, async (req, res)
     res.status(500).json({
       success: false,
       error: 'Error al registrar entrada: ' + error.message
-    });
-  }
-});
-
-// POST /api/attendance/exit - ACTUALIZADO
-router.post('/exit', authenticateToken, requireAdminOrScanner, async (req, res) => {
-  console.log('🚨 ===== INICIANDO REGISTRO DE SALIDA =====');
-  console.log('📥 DATOS RECIBIDOS:', JSON.stringify(req.body, null, 2));
-
-  try {
-    const { employee_id, hours_extra = 0, despalillo = 0, escogida = 0, monado = 0 } = req.body;
-
-    if (!employee_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'ID de empleado es requerido'
-      });
-    }
-
-    const employeeIdNum = parseInt(employee_id);
-    if (isNaN(employeeIdNum) || employeeIdNum <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'ID de empleado no es válido'
-      });
-    }
-
-    const employee = await getQuery(
-      'SELECT id, name, type, is_active FROM employees WHERE id = $1',
-      [employeeIdNum]
-    );
-
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        error: 'Empleado no encontrado'
-      });
-    }
-
-    if (!employee.is_active) {
-      return res.status(400).json({
-        success: false,
-        error: 'Empleado está inactivo'
-      });
-    }
-
-    let attendanceRecord;
-    let today;
-
-    if (process.env.NODE_ENV === 'production') {
-      // ✅ USAR CONVERSIÓN DE ZONA HORARIA EN POSTGRESQL
-      attendanceRecord = await getQuery(
-        `SELECT a.*, e.name, e.type 
-         FROM attendance a 
-         JOIN employees e ON a.employee_id = e.id 
-         WHERE a.employee_id = $1 AND a.date = (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date AND a.exit_time IS NULL`,
-        [employeeIdNum]
-      );
-      
-      // Obtener la fecha actual local para el mensaje
-      const dateResult = await getQuery(`SELECT (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date as local_date`);
-      today = dateResult.local_date;
-    } else {
-      // SQLite
-      today = new Date().toISOString().split('T')[0];
-      attendanceRecord = await getQuery(
-        `SELECT a.*, e.name, e.type 
-         FROM attendance a 
-         JOIN employees e ON a.employee_id = e.id 
-         WHERE a.employee_id = $1 AND a.date = $2 AND a.exit_time IS NULL`,
-        [employeeIdNum, today]
-      );
-    }
-
-    if (!attendanceRecord) {
-      return res.status(400).json({
-        success: false,
-        error: 'No existe una entrada pendiente para hoy. Registre la entrada primero.'
-      });
-    }
-
-    const hoursExtraNum = parseFloat(hours_extra) || 0;
-    const despalilloNum = parseFloat(despalillo) || 0;
-    const escogidaNum = parseFloat(escogida) || 0;
-    const monadoNum = parseFloat(monado) || 0;
-
-    let t_despalillo = 0;
-    let t_escogida = 0;
-    let t_monado = 0;
-    let prop_sabado = 0;
-    let septimo_dia = 0;
-
-    if (employee.type === 'Producción') {
-      t_despalillo = despalilloNum * 80;
-      t_escogida = escogidaNum * 70;
-      t_monado = monadoNum * 1;
-      const total_produccion = t_despalillo + t_escogida + t_monado;
-      prop_sabado = total_produccion * 0.90909;
-      septimo_dia = total_produccion * 0.181818;
-    }
-
-    let exitTime;
-
-    if (process.env.NODE_ENV === 'production') {
-      // ✅ USAR HORA LOCAL DE POSTGRESQL
-      const timeResult = await getQuery(`SELECT (CURRENT_TIME AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::time as local_time`);
-      exitTime = timeResult.local_time;
-    } else {
-      exitTime = getLocalTime();
-    }
-
-    console.log('🔄 Ejecutando UPDATE...');
-    
-    const updateResult = await runQuery(
-      `UPDATE attendance 
-       SET exit_time = $1, 
-           hours_extra = $2, 
-           despalillo = $3, 
-           escogida = $4, 
-           monado = $5,
-           t_despalillo = $6, 
-           t_escogida = $7, 
-           t_monado = $8, 
-           prop_sabado = $9, 
-           septimo_dia = $10
-       WHERE id = $11`,
-      [
-        exitTime, 
-        hoursExtraNum, 
-        despalilloNum, 
-        escogidaNum, 
-        monadoNum,
-        t_despalillo, 
-        t_escogida, 
-        t_monado, 
-        prop_sabado, 
-        septimo_dia,
-        attendanceRecord.id
-      ]
-    );
-
-    console.log('✅ UPDATE exitoso:', updateResult);
-
-    res.json({
-      success: true,
-      message: `✅ Salida registrada exitosamente para ${employee.name} a las ${formatTimeForDisplay(exitTime)}`,
-      data: {
-        employee_id: employeeIdNum,
-        employee_name: employee.name,
-        employee_type: employee.type,
-        date: today,
-        entry_time: attendanceRecord.entry_time,
-        exit_time: exitTime,
-        hours_extra: hoursExtraNum,
-        despalillo: despalilloNum,
-        escogida: escogidaNum,
-        monado: monadoNum,
-        t_despalillo,
-        t_escogida,
-        t_monado,
-        prop_sabado,
-        septimo_dia,
-        status: 'completed'
-      }
-    });
-
-  } catch (error) {
-    console.error('🚨 ERROR en registro de salida:', error.message);
-    
-    res.status(500).json({
-      success: false,
-      error: `Error al registrar salida: ${error.message}`
-    });
-  }
-});
-
-// GET /api/attendance/today - ACTUALIZADO
-router.get('/today', authenticateToken, async (req, res) => {
-  try {
-    console.log('📅 Obteniendo registros de hoy...');
-    
-    let records;
-    let today;
-
-    if (process.env.NODE_ENV === 'production') {
-      // ✅ USAR CONVERSIÓN DE ZONA HORARIA
-      records = await allQuery(
-        `SELECT 
-          a.*,
-          e.name as employee_name,
-          e.dni as employee_dni, 
-          e.type as employee_type
-        FROM attendance a
-        JOIN employees e ON a.employee_id = e.id
-        WHERE a.date = (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date
-        ORDER BY a.entry_time DESC`
-      );
-      
-      const dateResult = await getQuery(`SELECT (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'America/Guatemala')::date as local_date`);
-      today = dateResult.local_date;
-    } else {
-      // SQLite
-      today = new Date().toISOString().split('T')[0];
-      records = await allQuery(
-        `SELECT 
-          a.*,
-          e.name as employee_name,
-          e.dni as employee_dni, 
-          e.type as employee_type
-        FROM attendance a
-        JOIN employees e ON a.employee_id = e.id
-        WHERE a.date = $1
-        ORDER BY a.entry_time DESC`,
-        [today]
-      );
-    }
-
-    console.log(`✅ Encontrados ${records.length} registros para hoy (${today})`);
-    
-    res.json({
-      success: true,
-      data: records,
-      count: records.length,
-      current_date: today
-    });
-
-  } catch (error) {
-    console.error('Error obteniendo registros de hoy:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al obtener registros de hoy'
     });
   }
 });

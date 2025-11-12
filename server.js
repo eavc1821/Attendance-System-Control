@@ -18,7 +18,12 @@ const allowedOrigins = [
   'https://attendance-system-control-production.up.railway.app',
   'http://localhost:5173',
   'http://localhost:3000',
-  'http://localhost:5000'
+  'http://localhost:5000',
+  // ✅ CORS PARA MOVIL
+  'capacitor://localhost',
+  'ionic://localhost',
+  'http://localhost',
+  'https://localhost'
 ];
 
 // ✅ MIDDLEWARE CORS SIMPLIFICADO Y ROBUSTO
