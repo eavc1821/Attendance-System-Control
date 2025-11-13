@@ -52,7 +52,12 @@ router.post('/', upload.single('photo'), async (req, res) => {
     // 2️⃣ GENERAR EL QR EN BASE AL ID
     // ============================================
     const qrPayload = `employee:${employeeId}`;
-    const qrDataUrl = await QRCode.toDataURL(qrPayload);
+    const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+      width: 600,
+      margin: 2,
+      errorCorrectionLevel: "H"
+    });
+
 
     console.log("📌 QR PAYLOAD:", qrPayload.substring(0, 50));
     console.log("📌 QR DATA URL START:", qrDataUrl.substring(0, 50));
@@ -72,13 +77,13 @@ router.post('/', upload.single('photo'), async (req, res) => {
 
       } catch (err) {
         console.error("❌ ERROR SUBIENDO QR A CLOUDINARY:", err);
-        throw err; 
+        throw err;
       }
 
-      // GUARDAR URL DEL QR EN LA BASE
+      // GUARDAR URL EN BD
       await runQuery(
         "UPDATE employees SET qr_code = $1 WHERE id = $2",
-        [qrUpload.secure_url, employeeId]   // ← YA CORREGIDO
+        [qrUpload.secure_url, employeeId]
       );
 
 
