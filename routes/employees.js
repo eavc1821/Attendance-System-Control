@@ -27,13 +27,13 @@ router.post('/', upload.single('photo'), async (req, res) => {
       photoUrl = req.file.path; // ← Cloudinary URL pública HTTPS
     }
 
-    // INSERTAR EMPLEADO
+    // INSERTAR EMPLEADO con diferentes aspects
     const insertSql = `
       INSERT INTO employees (name, dni, type, monthly_salary, photo)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING id
     `;
-    const result = await getQuery(insertSql, [
+    const inserted = await getQuery(insertSql, [
       name,
       dni,
       type,
@@ -41,32 +41,34 @@ router.post('/', upload.single('photo'), async (req, res) => {
       photoUrl
     ]);
 
-    const employeeId = result.id;
+    const employeeId = inserted.id;  // <-- ID REAL YA CONFIRMADO
 
-    // GENERAR QR COMO TEXTO SIMPLE QUE CONTIENE EL ID
-    const qrData = `employee:${employeeId}`;
-    const qrDataUrl = await QRCode.toDataURL(qrData);
+    // GENERAR EL TEXTO QUE IRÁ EN EL QR
+    const qrPayload = `employee:${employeeId}`;
 
-    // Subir el dataURL a Cloudinary
-    const uploadResult = await cloudinary.uploader.upload(qrDataUrl, {
-      folder: 'attendance-system/qrs',
+    // GENERAR QR EN BASE64
+    const qrDataUrl = await QRCode.toDataURL(qrPayload);
+
+    // SUBIR QR A CLOUDINARY
+    const uploadQR = await cloudinary.uploader.upload(qrDataUrl, {
+      folder: "attendance-system/qrs",
       public_id: `qr-${employeeId}`,
       overwrite: true,
-      resource_type: 'image'
+      resource_type: "image"
     });
 
-    // Guardar la URL segura en BD
-    const qrUrl = uploadResult.secure_url;
+    // GUARDAR LA URL DEL QR EN LA BASE
+    await runQuery(
+      "UPDATE employees SET qr_code = $1 WHERE id = $2",
+      [uploadQR.secure_url, employeeId]
+    );
 
-    await runQuery('UPDATE employees SET qr_code = $1 WHERE id = $2', [qrUrl, employeeId]);
-
-    // En la respuesta devolver photo y qr como URLs
+    // RESPUESTA FINAL
     res.status(201).json({
       success: true,
-      message: 'Empleado creado correctamente',
       employeeId,
       photo: photoUrl,
-      qr: qrUrl
+      qr: uploadQR.secure_url
     });
 
   } catch (error) {
