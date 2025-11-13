@@ -42,6 +42,8 @@ router.post('/', upload.single('photo'), async (req, res) => {
       photoUrl
     ]);
 
+    console.log("📌 RESULTADO INSERTADO:", inserted);
+
     // ✅ NUEVO BLOQUE CORREGIDO PARA OBTENER EL ID DE FORMA UNIVERSAL
     const employeeId =
       inserted?.id ||
