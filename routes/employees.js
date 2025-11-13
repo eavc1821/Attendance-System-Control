@@ -21,11 +21,11 @@ router.post('/', upload.single('photo'), async (req, res) => {
   try {
     const { name, dni, type, monthly_salary } = req.body;
 
-    // FOTO SUBIDA A CLOUDINARY (si existe)
-    let photoUrl = req.file ? req.file.path : null;
+    // FOTO SUBIDA A CLOUDINARY
+    const photoUrl = req.file ? req.file.path : null;
 
     // ============================================
-    // 1️⃣ INSERTAR EMPLEADO EN BASE DE DATOS
+    // 1️⃣ INSERTAR EMPLEADO (POSTGRESQL)
     // ============================================
     const insertSql = `
       INSERT INTO employees (name, dni, type, monthly_salary, photo)
@@ -41,53 +41,61 @@ router.post('/', upload.single('photo'), async (req, res) => {
       photoUrl
     ]);
 
-    if (!inserted?.id) {
-      throw new Error("No se pudo obtener el ID generado del empleado.");
-    }
-
     const employeeId = inserted.id;
     console.log("🆔 Nuevo empleado ID:", employeeId);
 
-    // GENERAR QR COMO BUFFER
-        const qrBuffer = await QRCode.toBuffer(qrPayload, {
-          type: "png",
-          errorCorrectionLevel: "H",
-          width: 600,
-          margin: 2
-        });
-
-        // SUBIR POR STREAM (Cloudinary no optimiza ni reescribe)
-        const qrUpload = await new Promise((resolve, reject) => {
-          const uploadStream = cloudinary.uploader.upload_stream(
-            {
-              folder: "attendance-system/qrs",
-              public_id: `qr-${employeeId}`,
-              overwrite: true,
-              resource_type: "image",
-              format: "png"          // ← IMPORTANTE: fuerza PNG
-            },
-            (err, result) => {
-              if (err) reject(err);
-              else resolve(result);
-            }
-          );
-
-          uploadStream.end(qrBuffer);
-        });
-
-        // GUARDAR QR EN BD
-        await runQuery(
-          "UPDATE employees SET qr_code = $1 WHERE id = $2",
-          [qrUpload.secure_url, employeeId]
-        );
-
+    // ============================================
+    // 2️⃣ PREPARAR EL CONTENIDO DEL QR  (AQUÍ!)
+    // ============================================
+    const qrPayload = `employee:${employeeId}`;
+    console.log("📌 QR PAYLOAD:", qrPayload);
 
     // ============================================
-    // 5️⃣ RESPUESTA FINAL
+    // 3️⃣ GENERAR EL QR COMO BUFFER
+    // ============================================
+    const qrBuffer = await QRCode.toBuffer(qrPayload, {
+      type: "png",
+      errorCorrectionLevel: "H",
+      width: 600,
+      margin: 2
+    });
+
+    // ============================================
+    // 4️⃣ SUBIR QR A CLOUDINARY POR STREAM
+    // ============================================
+    const qrUpload = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: "attendance-system/qrs",
+          public_id: `qr-${employeeId}`,
+          overwrite: true,
+          resource_type: "image",
+          format: "png"
+        },
+        (err, result) => {
+          if (err) reject(err);
+          else resolve(result);
+        }
+      );
+
+      uploadStream.end(qrBuffer);
+    });
+
+    console.log("📌 QR SUBIDO:", qrUpload.secure_url);
+
+    // ============================================
+    // 5️⃣ GUARDAR LA URL DEL QR EN LA BASE
+    // ============================================
+    await runQuery(
+      "UPDATE employees SET qr_code = $1 WHERE id = $2",
+      [qrUpload.secure_url, employeeId]
+    );
+
+    // ============================================
+    // 6️⃣ RESPUESTA FINAL
     // ============================================
     res.status(201).json({
       success: true,
-      message: "Empleado creado correctamente",
       employeeId,
       photo: photoUrl,
       qr: qrUpload.secure_url
@@ -95,7 +103,6 @@ router.post('/', upload.single('photo'), async (req, res) => {
 
   } catch (error) {
     console.error("❌ Error creando empleado:", error);
-
     res.status(500).json({
       success: false,
       message: "Error creando empleado",
