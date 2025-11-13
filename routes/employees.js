@@ -41,7 +41,12 @@ router.post('/', upload.single('photo'), async (req, res) => {
       photoUrl
     ]);
 
-    const employeeId = inserted.id;  // <-- ID REAL YA CONFIRMADO
+    if (!inserted || !inserted.rows || !inserted.rows[0]) {
+  throw new Error("No se pudo insertar empleado. No se obtuvo ID.");
+      }
+
+      const employeeId = inserted.rows[0].id;
+
 
     // GENERAR EL TEXTO QUE IRÁ EN EL QR
     const qrPayload = `employee:${employeeId}`;
