@@ -3,6 +3,7 @@ const router = express.Router();
 const upload = require('../config/upload');
 const { getQuery, allQuery, runQuery } = require('../config/database');
 const QRCode = require('qrcode');
+const axios = require('axios');
 
 const cloudinary = require('cloudinary').v2;
 
@@ -194,8 +195,11 @@ router.get('/:id/qr', async (req, res) => {
       });
     }
 
-    const base64 = result.qr_code.replace(/^data:image\/png;base64,/, "");
-    const qrBuffer = Buffer.from(base64, 'base64');
+    const qrUrl = result.qr_code;
+
+    // 📌 Descargar el PNG desde Cloudinary
+    const response = await axios.get(qrUrl, { responseType: 'arraybuffer' });
+    const qrBuffer = Buffer.from(response.data, 'binary');
 
     res.writeHead(200, {
       'Content-Type': 'image/png',
@@ -203,11 +207,11 @@ router.get('/:id/qr', async (req, res) => {
       'Content-Length': qrBuffer.length
     });
 
-    res.end(qrBuffer);
+    return res.end(qrBuffer);
 
   } catch (error) {
     console.error('❌ Error descargando QR:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Error descargando QR',
       error: error.message
