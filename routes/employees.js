@@ -35,10 +35,15 @@ router.post('/', upload.single('photo'), async (req, res) => {
       type,
       monthly_salary,
       photoUrl
-    ]);
+    ]);;
 
-    const employeeId = inserted.id;
-    console.log("🆔 Nuevo empleado ID:", employeeId);
+    if (!inserted.rows || !inserted.rows[0]) {
+      console.error("❌ INSERT SIN FILAS:", inserted);
+      throw new Error("No se devolvió ID después del INSERT");
+    }
+
+    const employeeId = inserted.rows[0].id;
+    console.log("🆔 employeeId:", employeeId);
 
     // 2️⃣ Texto dentro del QR  (YA DEFINIDO AQUÍ, ANTES DE GENERARLO)
     const qrPayload = `employee:${employeeId}`;

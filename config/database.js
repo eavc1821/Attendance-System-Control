@@ -110,10 +110,9 @@ module.exports = {
   initializeDatabase,
 
   // Ejecutar INSERT/UPDATE/DELETE
-  runQuery: async (sql, params = []) => {
-    const result = await pool.query(sql, params);
-    return result.rows[0]; // SIEMPRE devuelve row 0
-  },
+    runQuery: async (sql, params = []) => {
+      return await pool.query(sql, params); // ← devuelve TODO
+    },
 
   // Obtener una sola fila
   getQuery: async (sql, params = []) => {
