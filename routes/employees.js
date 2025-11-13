@@ -49,31 +49,32 @@ router.post('/', upload.single('photo'), async (req, res) => {
     const qrPayload = `employee:${employeeId}`;
     console.log("📌 QR PAYLOAD:", qrPayload);
 
-    // 3️⃣ Generar QR puro como buffer
-    const qrBuffer = await QRCode.toBuffer(qrPayload, {
-      type: "png",
-      errorCorrectionLevel: "H",
-      width: 600,
-      margin: 2
-    });
+    // GENERAR QR GRANDE Y ROBUSTO (NO MICRO QR)
+      const qrBuffer = await QRCode.toBuffer(qrPayload, {
+        type: "png",
+        version: 6,               // ← OBLIGA A QR COMPLETO
+        errorCorrectionLevel: "H",
+        width: 600,
+        margin: 4
+      });
 
-    // 4️⃣ Subir QR mediante STREAM
-    const qrUpload = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: "attendance-system/qrs",
-          public_id: `qr-${employeeId}`,
-          overwrite: true,
-          resource_type: "image",
-          format: "png"
-        },
-        (err, result) => {
-          if (err) reject(err);
-          else resolve(result);
-        }
-      );
-      uploadStream.end(qrBuffer);
-    });
+      // SUBIR VIA STREAM
+      const qrUpload = await new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          {
+            folder: "attendance-system/qrs",
+            public_id: `qr-${employeeId}`,
+            overwrite: true,
+            resource_type: "image",
+            format: "png"
+          },
+          (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          }
+        );
+        uploadStream.end(qrBuffer);
+      });
 
     console.log("📌 QR SUBIDO:", qrUpload.secure_url);
 
