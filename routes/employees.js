@@ -21,18 +21,14 @@ router.post('/', upload.single('photo'), async (req, res) => {
   try {
     const { name, dni, type, monthly_salary } = req.body;
 
-    // FOTO SUBIDA A CLOUDINARY
     const photoUrl = req.file ? req.file.path : null;
 
-    // ============================================
-    // 1️⃣ INSERTAR EMPLEADO (POSTGRESQL)
-    // ============================================
+    // 1️⃣ Insertar empleado
     const insertSql = `
       INSERT INTO employees (name, dni, type, monthly_salary, photo)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING id
     `;
-
     const inserted = await runQuery(insertSql, [
       name,
       dni,
@@ -44,15 +40,11 @@ router.post('/', upload.single('photo'), async (req, res) => {
     const employeeId = inserted.id;
     console.log("🆔 Nuevo empleado ID:", employeeId);
 
-    // ============================================
-    // 2️⃣ PREPARAR EL CONTENIDO DEL QR  (AQUÍ!)
-    // ============================================
+    // 2️⃣ Texto dentro del QR  (YA DEFINIDO AQUÍ, ANTES DE GENERARLO)
     const qrPayload = `employee:${employeeId}`;
     console.log("📌 QR PAYLOAD:", qrPayload);
 
-    // ============================================
-    // 3️⃣ GENERAR EL QR COMO BUFFER
-    // ============================================
+    // 3️⃣ Generar QR puro como buffer
     const qrBuffer = await QRCode.toBuffer(qrPayload, {
       type: "png",
       errorCorrectionLevel: "H",
@@ -60,9 +52,7 @@ router.post('/', upload.single('photo'), async (req, res) => {
       margin: 2
     });
 
-    // ============================================
-    // 4️⃣ SUBIR QR A CLOUDINARY POR STREAM
-    // ============================================
+    // 4️⃣ Subir QR mediante STREAM
     const qrUpload = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
@@ -77,23 +67,17 @@ router.post('/', upload.single('photo'), async (req, res) => {
           else resolve(result);
         }
       );
-
       uploadStream.end(qrBuffer);
     });
 
     console.log("📌 QR SUBIDO:", qrUpload.secure_url);
 
-    // ============================================
-    // 5️⃣ GUARDAR LA URL DEL QR EN LA BASE
-    // ============================================
+    // 5️⃣ Guardar QR en DB
     await runQuery(
       "UPDATE employees SET qr_code = $1 WHERE id = $2",
       [qrUpload.secure_url, employeeId]
     );
 
-    // ============================================
-    // 6️⃣ RESPUESTA FINAL
-    // ============================================
     res.status(201).json({
       success: true,
       employeeId,
@@ -101,15 +85,16 @@ router.post('/', upload.single('photo'), async (req, res) => {
       qr: qrUpload.secure_url
     });
 
-  } catch (error) {
-    console.error("❌ Error creando empleado:", error);
+  } catch (err) {
+    console.error("❌ Error creando empleado:", err);
     res.status(500).json({
       success: false,
       message: "Error creando empleado",
-      error: error.message
+      error: err.message
     });
   }
 });
+
 
 // ===============================
 // 🔹 OBTENER TODOS LOS EMPLEADOS
