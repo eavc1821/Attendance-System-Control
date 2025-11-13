@@ -58,10 +58,8 @@ router.post('/', upload.single('photo'), async (req, res) => {
     console.log("📌 QR DATA URL START:", qrDataUrl.substring(0, 50));
 
 
-    // ============================================
-    // 3️⃣ SUBIR QR A CLOUDINARY
-    // ============================================
-    let qrUpload;
+   // SUBIR QR A CLOUDINARY
+      let qrUpload;
 
       try {
         qrUpload = await cloudinary.uploader.upload(qrDataUrl, {
@@ -74,14 +72,15 @@ router.post('/', upload.single('photo'), async (req, res) => {
 
       } catch (err) {
         console.error("❌ ERROR SUBIENDO QR A CLOUDINARY:", err);
+        throw err; 
       }
-    // ============================================
-    // 4️⃣ GUARDAR URL DEL QR EN LA BASE
-    // ============================================
-    await runQuery(
-      "UPDATE employees SET qr_code = $1 WHERE id = $2",
-      [qrUploaded.secure_url, employeeId]
-    );
+
+      // GUARDAR URL DEL QR EN LA BASE
+      await runQuery(
+        "UPDATE employees SET qr_code = $1 WHERE id = $2",
+        [qrUpload.secure_url, employeeId]   // ← YA CORREGIDO
+      );
+
 
     // ============================================
     // 5️⃣ RESPUESTA FINAL
