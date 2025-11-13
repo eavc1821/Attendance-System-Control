@@ -27,12 +27,13 @@ router.post('/', upload.single('photo'), async (req, res) => {
       photoUrl = req.file.path; // ← Cloudinary URL pública HTTPS
     }
 
-    // INSERTAR EMPLEADO con diferentes aspects
+    // INSERTAR EMPLEADO
     const insertSql = `
       INSERT INTO employees (name, dni, type, monthly_salary, photo)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING id
     `;
+
     const inserted = await getQuery(insertSql, [
       name,
       dni,
@@ -41,12 +42,15 @@ router.post('/', upload.single('photo'), async (req, res) => {
       photoUrl
     ]);
 
-    if (!inserted || !inserted.rows || !inserted.rows[0]) {
-  throw new Error("No se pudo insertar empleado. No se obtuvo ID.");
-      }
+    // ✅ NUEVO BLOQUE CORREGIDO PARA OBTENER EL ID DE FORMA UNIVERSAL
+    const employeeId =
+      inserted?.id ||
+      inserted?.employee_id ||
+      inserted?.rows?.[0]?.id;
 
-      const employeeId = inserted.rows[0].id;
-
+    if (!employeeId) {
+      throw new Error("No se pudo obtener el ID generado del empleado.");
+    }
 
     // GENERAR EL TEXTO QUE IRÁ EN EL QR
     const qrPayload = `employee:${employeeId}`;
@@ -85,6 +89,7 @@ router.post('/', upload.single('photo'), async (req, res) => {
     });
   }
 });
+
 
 // ===============================
 // 🔹 OBTENER TODOS LOS EMPLEADOS
@@ -282,6 +287,86 @@ router.get('/:id/stats', async (req, res) => {
     return res.status(500).json({
       success: false,
       error: "Error obteniendo estadísticas"
+    });
+  }
+});
+
+// ===============================
+// 🔥 ELIMINAR EMPLEADO
+// ===============================
+router.delete('/:id', async (req, res) => {
+  try {
+    const employeeId = req.params.id;
+
+    // Eliminar registro
+    const result = await runQuery(
+      "DELETE FROM employees WHERE id = $1",
+      [employeeId]
+    );
+
+    res.json({
+      success: true,
+      message: "Empleado eliminado correctamente"
+    });
+
+  } catch (error) {
+    console.error("❌ Error eliminando empleado:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error eliminando empleado",
+      error: error.message
+    });
+  }
+});
+
+
+// ===============================
+// 🔥 ACTUALIZAR EMPLEADO
+// ===============================
+router.put('/:id', upload.single('photo'), async (req, res) => {
+  try {
+    const { name, dni, type, monthly_salary, is_active } = req.body;
+
+    let photoUrl = null;
+
+    if (req.file) {
+      photoUrl = req.file.path; // URL Cloudinary
+    }
+
+    const updateSql = `
+      UPDATE employees
+      SET name = $1,
+          dni = $2,
+          type = $3,
+          monthly_salary = $4,
+          is_active = $5,
+          photo = COALESCE($6, photo)
+      WHERE id = $7
+      RETURNING *
+    `;
+
+    const updated = await getQuery(updateSql, [
+      name,
+      dni,
+      type,
+      monthly_salary,
+      is_active,
+      photoUrl,
+      req.params.id
+    ]);
+
+    res.json({
+      success: true,
+      message: "Empleado actualizado correctamente",
+      data: updated
+    });
+
+  } catch (error) {
+    console.error("❌ Error actualizando empleado:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error actualizando empleado",
+      error: error.message
     });
   }
 });
