@@ -24,7 +24,7 @@ router.post('/', upload.single('photo'), async (req, res) => {
     // FOTO SUBIDA A CLOUDINARY
     let photoUrl = null;
     if (req.file) {
-      photoUrl = req.file.path; // ← Cloudinary URL pública HTTPS
+      photoUrl = req.file.path; // URL de Cloudinary
     }
 
     // INSERTAR EMPLEADO
@@ -34,7 +34,7 @@ router.post('/', upload.single('photo'), async (req, res) => {
       RETURNING id
     `;
 
-    const inserted = await getQuery(insertSql, [
+    const result = await runQuery(insertSql, [
       name,
       dni,
       type,
@@ -42,13 +42,10 @@ router.post('/', upload.single('photo'), async (req, res) => {
       photoUrl
     ]);
 
-    console.log("📌 RESULTADO INSERTADO:", inserted);
+    console.log("📌 RESULTADO INSERTADO:", result);
 
-    // ✅ NUEVO BLOQUE CORREGIDO PARA OBTENER EL ID DE FORMA UNIVERSAL
-    const employeeId =
-      inserted?.id ||
-      inserted?.employee_id ||
-      inserted?.rows?.[0]?.id;
+    // EXTRAER EL ID CORRECTAMENTE (Railway/Postgre retorna { id: x })
+    const employeeId = result?.id;
 
     if (!employeeId) {
       throw new Error("No se pudo obtener el ID generado del empleado.");
@@ -91,6 +88,7 @@ router.post('/', upload.single('photo'), async (req, res) => {
     });
   }
 });
+
 
 
 // ===============================
