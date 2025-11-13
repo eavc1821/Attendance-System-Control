@@ -1,12 +1,9 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "echo 'Skipping build for Node.js backend'"
+dir = "backend"
 
 [deploy]
-startCommand = "npm start"
-
-[build.env]
-NODE_ENV = "production"
+startCommand = "node server.js"
 
 [env]
 NODE_ENV = "production"
