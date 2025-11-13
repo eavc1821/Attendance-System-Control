@@ -48,43 +48,38 @@ router.post('/', upload.single('photo'), async (req, res) => {
     const employeeId = inserted.id;
     console.log("🆔 Nuevo empleado ID:", employeeId);
 
-    // ============================================
-    // 2️⃣ GENERAR EL QR EN BASE AL ID
-    // ============================================
-    const qrPayload = `employee:${employeeId}`;
-    const qrDataUrl = await QRCode.toDataURL(qrPayload, {
-      width: 600,
-      margin: 2,
-      errorCorrectionLevel: "H"
-    });
-
-
-    console.log("📌 QR PAYLOAD:", qrPayload.substring(0, 50));
-    console.log("📌 QR DATA URL START:", qrDataUrl.substring(0, 50));
-
-
-   // SUBIR QR A CLOUDINARY
-      let qrUpload;
-
-      try {
-        qrUpload = await cloudinary.uploader.upload(qrDataUrl, {
-          folder: "attendance-system/qrs",
-          public_id: `qr-${employeeId}`,
-          overwrite: true,
-          resource_type: "image"
+    // GENERAR QR COMO BUFFER
+        const qrBuffer = await QRCode.toBuffer(qrPayload, {
+          type: "png",
+          errorCorrectionLevel: "H",
+          width: 600,
+          margin: 2
         });
-        console.log("📌 QR SUBIDO:", qrUpload.secure_url);
 
-      } catch (err) {
-        console.error("❌ ERROR SUBIENDO QR A CLOUDINARY:", err);
-        throw err;
-      }
+        // SUBIR POR STREAM (Cloudinary no optimiza ni reescribe)
+        const qrUpload = await new Promise((resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            {
+              folder: "attendance-system/qrs",
+              public_id: `qr-${employeeId}`,
+              overwrite: true,
+              resource_type: "image",
+              format: "png"          // ← IMPORTANTE: fuerza PNG
+            },
+            (err, result) => {
+              if (err) reject(err);
+              else resolve(result);
+            }
+          );
 
-      // GUARDAR URL EN BD
-      await runQuery(
-        "UPDATE employees SET qr_code = $1 WHERE id = $2",
-        [qrUpload.secure_url, employeeId]
-      );
+          uploadStream.end(qrBuffer);
+        });
+
+        // GUARDAR QR EN BD
+        await runQuery(
+          "UPDATE employees SET qr_code = $1 WHERE id = $2",
+          [qrUpload.secure_url, employeeId]
+        );
 
 
     // ============================================
