@@ -23,62 +23,64 @@ router.post('/', upload.single('photo'), async (req, res) => {
 
     const photoUrl = req.file ? req.file.path : null;
 
-    // 1️⃣ Insertar empleado
+    // INSERT
     const insertSql = `
       INSERT INTO employees (name, dni, type, monthly_salary, photo)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING id
     `;
-    const inserted = await runQuery(insertSql, [
+
+    const result = await runQuery(insertSql, [
       name,
       dni,
       type,
       monthly_salary,
       photoUrl
-    ]);;
+    ]);
 
-    if (!inserted.rows || !inserted.rows[0]) {
-      console.error("❌ INSERT SIN FILAS:", inserted);
+    // VALIDAR FILAS
+    if (!result || !result.rows || result.rows.length === 0) {
+      console.error("❌ INSERT SIN FILAS:", result);
       throw new Error("No se devolvió ID después del INSERT");
     }
 
-    const employeeId = inserted.rows[0].id;
+    const employeeId = result.rows[0].id;
     console.log("🆔 employeeId:", employeeId);
 
-    // 2️⃣ Texto dentro del QR  (YA DEFINIDO AQUÍ, ANTES DE GENERARLO)
+    // QR PAYLOAD
     const qrPayload = `employee:${employeeId}`;
     console.log("📌 QR PAYLOAD:", qrPayload);
 
-    // GENERAR QR GRANDE Y ROBUSTO (NO MICRO QR)
-      const qrBuffer = await QRCode.toBuffer(qrPayload, {
-        type: "png",
-        version: 6,               // ← OBLIGA A QR COMPLETO
-        errorCorrectionLevel: "H",
-        width: 600,
-        margin: 4
-      });
+    // GENERAR QR
+    const qrBuffer = await QRCode.toBuffer(qrPayload, {
+      type: "png",
+      version: 6,
+      errorCorrectionLevel: "H",
+      width: 600,
+      margin: 4
+    });
 
-      // SUBIR VIA STREAM
-      const qrUpload = await new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          {
-            folder: "attendance-system/qrs",
-            public_id: `qr-${employeeId}`,
-            overwrite: true,
-            resource_type: "image",
-            format: "png"
-          },
-          (err, result) => {
-            if (err) reject(err);
-            else resolve(result);
-          }
-        );
-        uploadStream.end(qrBuffer);
-      });
+    // SUBIR QR
+    const qrUpload = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: "attendance-system/qrs",
+          public_id: `qr-${employeeId}`,
+          overwrite: true,
+          resource_type: "image",
+          format: "png"
+        },
+        (err, result) => {
+          if (err) reject(err);
+          else resolve(result);
+        }
+      );
+      uploadStream.end(qrBuffer);
+    });
 
     console.log("📌 QR SUBIDO:", qrUpload.secure_url);
 
-    // 5️⃣ Guardar QR en DB
+    // GUARDAR URL QR
     await runQuery(
       "UPDATE employees SET qr_code = $1 WHERE id = $2",
       [qrUpload.secure_url, employeeId]
@@ -100,6 +102,7 @@ router.post('/', upload.single('photo'), async (req, res) => {
     });
   }
 });
+
 
 
 // ===============================
