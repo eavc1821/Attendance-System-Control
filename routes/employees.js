@@ -54,16 +54,27 @@ router.post('/', upload.single('photo'), async (req, res) => {
     const qrPayload = `employee:${employeeId}`;
     const qrDataUrl = await QRCode.toDataURL(qrPayload);
 
+    console.log("📌 QR PAYLOAD:", qrPayload.substring(0, 50));
+    console.log("📌 QR DATA URL START:", qrDataUrl.substring(0, 50));
+
+
     // ============================================
     // 3️⃣ SUBIR QR A CLOUDINARY
     // ============================================
-    const qrUploaded = await cloudinary.uploader.upload(qrDataUrl, {
-      folder: "attendance-system/qrs",
-      public_id: `qr-${employeeId}`,
-      overwrite: true,
-      resource_type: "image"
-    });
+    let qrUpload;
 
+      try {
+        qrUpload = await cloudinary.uploader.upload(qrDataUrl, {
+          folder: "attendance-system/qrs",
+          public_id: `qr-${employeeId}`,
+          overwrite: true,
+          resource_type: "image"
+        });
+        console.log("📌 QR SUBIDO:", qrUpload.secure_url);
+
+      } catch (err) {
+        console.error("❌ ERROR SUBIENDO QR A CLOUDINARY:", err);
+      }
     // ============================================
     // 4️⃣ GUARDAR URL DEL QR EN LA BASE
     // ============================================
