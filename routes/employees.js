@@ -4,9 +4,9 @@ const upload = require('../config/upload');
 const { getQuery, allQuery, runQuery } = require('../config/database');
 const QRCode = require('qrcode');
 const axios = require('axios');
-
 const cloudinary = require('cloudinary').v2;
 
+// Cloudinary config
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -15,26 +15,25 @@ cloudinary.config({
 
 
 // ===============================
-// 🔹 CREAR EMPLEADO
+// 🔥 CREAR EMPLEADO (Optimizado)
 // ===============================
 router.post('/', upload.single('photo'), async (req, res) => {
   try {
     const { name, dni, type, monthly_salary } = req.body;
 
-    // FOTO SUBIDA A CLOUDINARY
-    let photoUrl = null;
-    if (req.file) {
-      photoUrl = req.file.path; // URL de Cloudinary
-    }
+    // FOTO SUBIDA A CLOUDINARY (si existe)
+    let photoUrl = req.file ? req.file.path : null;
 
-    // INSERTAR EMPLEADO
+    // ============================================
+    // 1️⃣ INSERTAR EMPLEADO EN BASE DE DATOS
+    // ============================================
     const insertSql = `
       INSERT INTO employees (name, dni, type, monthly_salary, photo)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING id
     `;
 
-    const result = await runQuery(insertSql, [
+    const inserted = await runQuery(insertSql, [
       name,
       dni,
       type,
@@ -42,54 +41,58 @@ router.post('/', upload.single('photo'), async (req, res) => {
       photoUrl
     ]);
 
-    console.log("📌 RESULTADO INSERTADO:", result);
-
-    // EXTRAER EL ID CORRECTAMENTE (Railway/Postgre retorna { id: x })
-    const employeeId = result?.id;
-
-    if (!employeeId) {
+    if (!inserted?.id) {
       throw new Error("No se pudo obtener el ID generado del empleado.");
     }
 
-    // GENERAR EL TEXTO QUE IRÁ EN EL QR
-    const qrPayload = `employee:${employeeId}`;
+    const employeeId = inserted.id;
+    console.log("🆔 Nuevo empleado ID:", employeeId);
 
-    // GENERAR QR EN BASE64
+    // ============================================
+    // 2️⃣ GENERAR EL QR EN BASE AL ID
+    // ============================================
+    const qrPayload = `employee:${employeeId}`;
     const qrDataUrl = await QRCode.toDataURL(qrPayload);
 
-    // SUBIR QR A CLOUDINARY
-    const uploadQR = await cloudinary.uploader.upload(qrDataUrl, {
+    // ============================================
+    // 3️⃣ SUBIR QR A CLOUDINARY
+    // ============================================
+    const qrUploaded = await cloudinary.uploader.upload(qrDataUrl, {
       folder: "attendance-system/qrs",
       public_id: `qr-${employeeId}`,
       overwrite: true,
       resource_type: "image"
     });
 
-    // GUARDAR LA URL DEL QR EN LA BASE
+    // ============================================
+    // 4️⃣ GUARDAR URL DEL QR EN LA BASE
+    // ============================================
     await runQuery(
       "UPDATE employees SET qr_code = $1 WHERE id = $2",
-      [uploadQR.secure_url, employeeId]
+      [qrUploaded.secure_url, employeeId]
     );
 
-    // RESPUESTA FINAL
+    // ============================================
+    // 5️⃣ RESPUESTA FINAL
+    // ============================================
     res.status(201).json({
       success: true,
+      message: "Empleado creado correctamente",
       employeeId,
       photo: photoUrl,
-      qr: uploadQR.secure_url
+      qr: qrUploaded.secure_url
     });
 
   } catch (error) {
-    console.error('❌ Error creando empleado:', error);
+    console.error("❌ Error creando empleado:", error);
+
     res.status(500).json({
       success: false,
-      message: 'Error creando empleado',
+      message: "Error creando empleado",
       error: error.message
     });
   }
 });
-
-
 
 // ===============================
 // 🔹 OBTENER TODOS LOS EMPLEADOS
@@ -97,48 +100,41 @@ router.post('/', upload.single('photo'), async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const employees = await allQuery(`
-      SELECT id, name, dni, type, monthly_salary, 
-             photo, qr_code, is_active
+      SELECT id, name, dni, type, monthly_salary, photo, qr_code, is_active
       FROM employees
       ORDER BY id ASC
     `);
 
     res.json({ success: true, data: employees });
-  } catch (error) {
-    console.error('❌ Error obteniendo empleados:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error obteniendo empleados'
-    });
+
+  } catch (err) {
+    console.error("❌ Error obteniendo empleados:", err);
+    res.status(500).json({ success: false, message: "Error obteniendo empleados" });
   }
 });
+
 
 // ===============================
 // 🔹 OBTENER UN EMPLEADO POR ID
 // ===============================
 router.get('/:id', async (req, res) => {
   try {
-    const result = await getQuery(`
-      SELECT id, name, dni, type, monthly_salary, 
-             photo, qr_code, is_active
-      FROM employees
-      WHERE id = $1
+    const employee = await getQuery(`
+      SELECT id, name, dni, type, monthly_salary, photo, qr_code, is_active
+      FROM employees WHERE id = $1
     `, [req.params.id]);
 
-    if (!result) {
-      return res.status(404).json({ success: false, message: 'Empleado no encontrado' });
-    }
+    if (!employee)
+      return res.status(404).json({ success: false, message: "Empleado no encontrado" });
 
-    res.json({ success: true, data: result });
+    res.json({ success: true, data: employee });
 
-  } catch (error) {
-    console.error('❌ Error obteniendo empleado:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error obteniendo empleado'
-    });
+  } catch (err) {
+    console.error("❌ Error obteniendo empleado:", err);
+    res.status(500).json({ success: false, message: "Error obteniendo empleado" });
   }
 });
+
 
 // ===============================
 // 🔹 ACTUALIZAR EMPLEADO
@@ -147,24 +143,20 @@ router.put('/:id', upload.single('photo'), async (req, res) => {
   try {
     const { name, dni, type, monthly_salary, is_active } = req.body;
 
-    let photoUrl = null;
-    if (req.file) {
-      photoUrl = req.file.path; // CLOUDINARY URL
-    }
+    const photoUrl = req.file ? req.file.path : null;
 
-    const updateSql = `
+    const updated = await getQuery(`
       UPDATE employees
       SET name = $1,
           dni = $2,
           type = $3,
           monthly_salary = $4,
           is_active = $5,
-          photo = COALESCE($6, photo)
+          photo = COALESCE($6, photo),
+          updated_at = NOW()
       WHERE id = $7
       RETURNING *
-    `;
-
-    const updated = await getQuery(updateSql, [
+    `, [
       name,
       dni,
       type,
@@ -176,198 +168,113 @@ router.put('/:id', upload.single('photo'), async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Empleado actualizado correctamente',
+      message: "Empleado actualizado",
       data: updated
     });
 
-  } catch (error) {
-    console.error('❌ Error actualizando empleado:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error actualizando empleado',
-      error: error.message
-    });
+  } catch (err) {
+    console.error("❌ Error actualizando:", err);
+    res.status(500).json({ success: false, message: "Error actualizando empleado" });
   }
 });
+
+
 
 // ===============================
 // 🔹 DESCARGAR QR COMO IMAGEN PNG
 // ===============================
 router.get('/:id/qr', async (req, res) => {
   try {
-    const result = await getQuery(
-      'SELECT qr_code FROM employees WHERE id = $1',
+    const employee = await getQuery(
+      "SELECT qr_code FROM employees WHERE id = $1",
       [req.params.id]
     );
 
-    if (!result?.qr_code) {
-      return res.status(404).json({
-        success: false,
-        message: 'QR no encontrado para este empleado'
-      });
-    }
+    if (!employee?.qr_code)
+      return res.status(404).json({ success: false, message: "QR no encontrado" });
 
-    const qrUrl = result.qr_code;
-
-    // 📌 Descargar el PNG desde Cloudinary
-    const response = await axios.get(qrUrl, { responseType: 'arraybuffer' });
-    const qrBuffer = Buffer.from(response.data, 'binary');
+    const response = await axios.get(employee.qr_code, { responseType: "arraybuffer" });
+    const buffer = Buffer.from(response.data, "binary");
 
     res.writeHead(200, {
-      'Content-Type': 'image/png',
-      'Content-Disposition': `attachment; filename=qr-${req.params.id}.png`,
-      'Content-Length': qrBuffer.length
+      "Content-Type": "image/png",
+      "Content-Disposition": `attachment; filename=qr-${req.params.id}.png`,
+      "Content-Length": buffer.length
     });
 
-    return res.end(qrBuffer);
+    res.end(buffer);
 
-  } catch (error) {
-    console.error('❌ Error descargando QR:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Error descargando QR',
-      error: error.message
-    });
+  } catch (err) {
+    console.error("❌ Error descargando QR:", err);
+    res.status(500).json({ success: false, message: "Error descargando QR" });
   }
 });
+
 
 // =====================================
 // 🔹 OBTENER ESTADÍSTICAS DEL EMPLEADO
 // =====================================
 router.get('/:id/stats', async (req, res) => {
   try {
-    const employeeId = req.params.id;
+    const id = req.params.id;
 
-    // TOTAL DE DÍAS TRABAJADOS
-    const daysWorked = await getQuery(
-      'SELECT COUNT(*) AS dias FROM attendance WHERE employee_id = $1',
-      [employeeId]
+    const days = await getQuery(
+      "SELECT COUNT(*) AS dias FROM attendance WHERE employee_id = $1",
+      [id]
     );
 
-    // PRODUCCIÓN TOTAL POR RUBRO
-    const production = await getQuery(
-      `SELECT 
-          COALESCE(SUM(despalillo), 0) AS total_despalillo,
-          COALESCE(SUM(escogida), 0) AS total_escogida,
-          COALESCE(SUM(monado), 0) AS total_monado
-        FROM attendance
-        WHERE employee_id = $1`,
-      [employeeId]
-    );
+    const production = await getQuery(`
+      SELECT 
+        COALESCE(SUM(despalillo),0) AS total_despalillo,
+        COALESCE(SUM(escogida),0) AS total_escogida,
+        COALESCE(SUM(monado),0) AS total_monado
+      FROM attendance WHERE employee_id = $1
+    `, [id]);
 
-    // HORAS EXTRAS
-    const hoursExtra = await getQuery(
-      'SELECT COALESCE(SUM(hours_extra), 0) AS horas_extras FROM attendance WHERE employee_id = $1',
-      [employeeId]
-    );
+    const he = await getQuery(`
+      SELECT COALESCE(SUM(hours_extra),0) AS horas_extras
+      FROM attendance WHERE employee_id = $1
+    `, [id]);
 
-    return res.json({
+    res.json({
       success: true,
       data: {
-        dias_trabajados: Number(daysWorked.dias),
-        total_despalillo: Number(production.total_despalillo),
-        total_escogida: Number(production.total_escogida),
-        total_monado: Number(production.total_monado),
-        horas_extras: Number(hoursExtra.horas_extras),
-        // Valores adicionales con defaults
+        dias_trabajados: Number(days?.dias || 0),
+        total_despalillo: Number(production?.total_despalillo || 0),
+        total_escogida: Number(production?.total_escogida || 0),
+        total_monado: Number(production?.total_monado || 0),
+        horas_extras: Number(he?.horas_extras || 0),
         t_despalillo: 0,
         t_escogida: 0,
         t_monado: 0,
         prop_sabado: 0,
         septimo_dia: 0,
-        neto_pagar: 0,
-        he_dinero: 0,
-        sabado: 0,
-        salario_diario: 0
+        neto_pagar: 0
       }
     });
 
-  } catch (error) {
-    console.error("❌ Error obteniendo stats:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Error obteniendo estadísticas"
-    });
+  } catch (err) {
+    console.error("❌ Error stats:", err);
+    res.status(500).json({ success: false, message: "Error obteniendo estadísticas" });
   }
 });
+
 
 // ===============================
 // 🔥 ELIMINAR EMPLEADO
 // ===============================
 router.delete('/:id', async (req, res) => {
   try {
-    const employeeId = req.params.id;
-
-    // Eliminar registro
-    const result = await runQuery(
-      "DELETE FROM employees WHERE id = $1",
-      [employeeId]
-    );
+    await runQuery("DELETE FROM employees WHERE id = $1", [req.params.id]);
 
     res.json({
       success: true,
       message: "Empleado eliminado correctamente"
     });
 
-  } catch (error) {
-    console.error("❌ Error eliminando empleado:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error eliminando empleado",
-      error: error.message
-    });
-  }
-});
-
-
-// ===============================
-// 🔥 ACTUALIZAR EMPLEADO
-// ===============================
-router.put('/:id', upload.single('photo'), async (req, res) => {
-  try {
-    const { name, dni, type, monthly_salary, is_active } = req.body;
-
-    let photoUrl = null;
-
-    if (req.file) {
-      photoUrl = req.file.path; // URL Cloudinary
-    }
-
-    const updateSql = `
-      UPDATE employees
-      SET name = $1,
-          dni = $2,
-          type = $3,
-          monthly_salary = $4,
-          is_active = $5,
-          photo = COALESCE($6, photo)
-      WHERE id = $7
-      RETURNING *
-    `;
-
-    const updated = await getQuery(updateSql, [
-      name,
-      dni,
-      type,
-      monthly_salary,
-      is_active,
-      photoUrl,
-      req.params.id
-    ]);
-
-    res.json({
-      success: true,
-      message: "Empleado actualizado correctamente",
-      data: updated
-    });
-
-  } catch (error) {
-    console.error("❌ Error actualizando empleado:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error actualizando empleado",
-      error: error.message
-    });
+  } catch (err) {
+    console.error("❌ Error eliminando empleado:", err);
+    res.status(500).json({ success: false, message: "Error eliminando empleado" });
   }
 });
 
