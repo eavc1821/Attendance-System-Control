@@ -4,6 +4,8 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
+
 
 // 🔧 Importar rutas
 const employeesRoutes = require('./routes/employees');
