@@ -12,6 +12,7 @@ const reportsRoutes = require('./routes/reports');
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
 const dashboardRoutes = require('./routes/dashboard');
+const devRoutes = require('./routes/dev');
 const uploadsPath = path.join(__dirname, 'uploads');
 
 
@@ -53,6 +54,7 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/dev', devRoutes);
 
 app.use('/uploads', (req, res, next) => {
   const filePath = path.join(uploadsPath, req.path);
