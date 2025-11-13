@@ -4,6 +4,15 @@ const upload = require('../config/upload');
 const { getQuery, allQuery, runQuery } = require('../config/database');
 const QRCode = require('qrcode');
 
+const cloudinary = require('cloudinary').v2;
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+
 // ===============================
 // 🔹 CREAR EMPLEADO
 // ===============================
@@ -35,20 +44,28 @@ router.post('/', upload.single('photo'), async (req, res) => {
 
     // GENERAR QR COMO TEXTO SIMPLE QUE CONTIENE EL ID
     const qrData = `employee:${employeeId}`;
-    const qrCodeBase64 = await QRCode.toDataURL(qrData);
+    const qrDataUrl = await QRCode.toDataURL(qrData);
 
-    // GUARDAR QR EN LA BD
-    await runQuery(
-      'UPDATE employees SET qr_code = $1 WHERE id = $2',
-      [qrCodeBase64, employeeId]
-    );
+    // Subir el dataURL a Cloudinary
+    const uploadResult = await cloudinary.uploader.upload(qrDataUrl, {
+      folder: 'attendance-system/qrs',
+      public_id: `qr-${employeeId}`,
+      overwrite: true,
+      resource_type: 'image'
+    });
 
+    // Guardar la URL segura en BD
+    const qrUrl = uploadResult.secure_url;
+
+    await runQuery('UPDATE employees SET qr_code = $1 WHERE id = $2', [qrUrl, employeeId]);
+
+    // En la respuesta devolver photo y qr como URLs
     res.status(201).json({
       success: true,
       message: 'Empleado creado correctamente',
       employeeId,
       photo: photoUrl,
-      qr: qrCodeBase64
+      qr: qrUrl
     });
 
   } catch (error) {
@@ -197,5 +214,66 @@ router.get('/:id/qr', async (req, res) => {
     });
   }
 });
+
+// =====================================
+// 🔹 OBTENER ESTADÍSTICAS DEL EMPLEADO
+// =====================================
+router.get('/:id/stats', async (req, res) => {
+  try {
+    const employeeId = req.params.id;
+
+    // TOTAL DE DÍAS TRABAJADOS
+    const daysWorked = await getQuery(
+      'SELECT COUNT(*) AS dias FROM attendance WHERE employee_id = $1',
+      [employeeId]
+    );
+
+    // PRODUCCIÓN TOTAL POR RUBRO
+    const production = await getQuery(
+      `SELECT 
+          COALESCE(SUM(despalillo), 0) AS total_despalillo,
+          COALESCE(SUM(escogida), 0) AS total_escogida,
+          COALESCE(SUM(monado), 0) AS total_monado
+        FROM attendance
+        WHERE employee_id = $1`,
+      [employeeId]
+    );
+
+    // HORAS EXTRAS
+    const hoursExtra = await getQuery(
+      'SELECT COALESCE(SUM(hours_extra), 0) AS horas_extras FROM attendance WHERE employee_id = $1',
+      [employeeId]
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        dias_trabajados: Number(daysWorked.dias),
+        total_despalillo: Number(production.total_despalillo),
+        total_escogida: Number(production.total_escogida),
+        total_monado: Number(production.total_monado),
+        horas_extras: Number(hoursExtra.horas_extras),
+        // Valores adicionales con defaults
+        t_despalillo: 0,
+        t_escogida: 0,
+        t_monado: 0,
+        prop_sabado: 0,
+        septimo_dia: 0,
+        neto_pagar: 0,
+        he_dinero: 0,
+        sabado: 0,
+        salario_diario: 0
+      }
+    });
+
+  } catch (error) {
+    console.error("❌ Error obteniendo stats:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Error obteniendo estadísticas"
+    });
+  }
+});
+
 
 module.exports = router;

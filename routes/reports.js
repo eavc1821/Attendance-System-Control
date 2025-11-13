@@ -131,39 +131,66 @@ router.get('/weekly', authenticateToken, async (req, res) => {
       end_date
     });
 
-    const productionWithCalculations = productionRows.map(row => {
-      const total_produccion = (row.t_despalillo || 0) + (row.t_escogida || 0) + (row.t_monado || 0);
-      const prop_sabado = total_produccion * 0.090909;
-      const neto_pagar = total_produccion + prop_sabado + (row.septimo_dia || 0);
+    // dentro de la transformación productionWithCalculations = productionRows.map(...)
+      const productionWithCalculations = productionRows.map(row => {
+      const t_desp = Number(row.t_despalillo || 0);
+      const t_esc = Number(row.t_escogida || 0);
+      const t_mon = Number(row.t_monado || 0);
+
+      // Si no hay t_ en la fila pero sí cantidades, calcular acá para seguridad
+      const total_despalillo = Number(row.total_despalillo || 0);
+      const total_escogida  = Number(row.total_escogida || 0);
+      const total_monado    = Number(row.total_monado || 0);
+
+      // Si t_ están a 0 pero cantidades no son 0, recalcular según fórmula:
+      const final_t_desp = t_desp || Number((total_despalillo * 80).toFixed(2));
+      const final_t_esc  = t_esc  || Number((total_escogida * 70).toFixed(2));
+      const final_t_mon  = t_mon  || Number((total_monado * 1).toFixed(2));
+
+      const subtotal = final_t_desp + final_t_esc + final_t_mon;
+      const sabado = Number((subtotal * 0.090909).toFixed(2));
+      const septimo_dia = Number((subtotal * 0.181818).toFixed(2));
+      const neto = Number((subtotal + sabado + septimo_dia).toFixed(2));
 
       return {
         ...row,
-        prop_sabado: Math.round(prop_sabado * 100) / 100,
-        neto_pagar: Math.round(neto_pagar * 100) / 100,
-        total_produccion: Math.round(total_produccion * 100) / 100
+        t_despalillo: final_t_desp,
+        t_escogida: final_t_esc,
+        t_monado: final_t_mon,
+        sabado,
+        septimo_dia,
+        neto_a_pagar: neto
       };
     });
+
 
     const alDiaWithCalculations = alDiaRows.map(row => {
-      const salario_diario = (row.monthly_salary || 0) / 30;
-      const valorHoraNormal = salario_diario / 8;
-      const valorHoraExtra = valorHoraNormal * 1.25;
-      const he_dinero = (row.horas_extras || 0) * valorHoraExtra;
-      
-      const sabado = row.sabado || 0;
-      const septimo_dia = row.septimo_dia || 0;
-      
-      const neto_pagar = ((row.dias_trabajados || 0) * salario_diario) + he_dinero + sabado + septimo_dia;
+      const dias = Number(row.dias_trabajados || 0);
+      const monthly = Number(row.monthly_salary || 0);
+      const salario_diario = Number((monthly / 30).toFixed(2));
+
+      // horas extras totales ya sumadas en row.horas_extras
+      const horasExtra = Number(row.horas_extras || 0);
+      const s_por_hora = salario_diario / 8;
+      const he_dinero = Number((((s_por_hora) + (s_por_hora * 0.25)) * horasExtra).toFixed(2));
+
+      // septimo dia: aplicar si dias >= 5 -> sumar salario_diario
+      const septimo_dia = dias >= 5 ? salario_diario : 0;
+
+      // sabado: row.sabado ya viene de SUM(prop_sabado)
+      const sabado = Number(row.sabado || 0);
+
+      const neto_pagar = Number(((dias * salario_diario) + he_dinero + sabado + septimo_dia).toFixed(2));
 
       return {
         ...row,
-        salario_diario: Math.round(salario_diario * 100) / 100,
-        he_dinero: Math.round(he_dinero * 100) / 100,
-        sabado: Math.round(sabado * 100) / 100,
-        septimo_dia: Math.round(septimo_dia * 100) / 100,
-        neto_pagar: Math.round(neto_pagar * 100) / 100
+        salario_diario,
+        he_dinero,
+        septimo_dia,
+        neto_pagar
       };
     });
+
 
     const totalProduction = productionWithCalculations.reduce((sum, emp) => sum + (emp.neto_pagar || 0), 0);
     const totalAlDia = alDiaWithCalculations.reduce((sum, emp) => sum + (emp.neto_pagar || 0), 0);
