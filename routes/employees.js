@@ -90,7 +90,7 @@ router.post('/', upload.single('photo'), async (req, res) => {
       message: "Empleado creado correctamente",
       employeeId,
       photo: photoUrl,
-      qr: qrUploaded.secure_url
+      qr: qrUpload.secure_url
     });
 
   } catch (error) {
