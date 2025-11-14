@@ -54,10 +54,20 @@ router.post('/entry', async (req, res) => {
       RETURNING *;
     `, [employee_id, today, now]);
 
-    res.json({
-      success: true,
-      message: "Entrada registrada correctamente",
-      data: result
+    // Emitir evento al dashboard
+        const io = req.app.get("io");
+        if (io) {
+          io.emit("attendance:updated", {
+            action: "entry",
+            employee_id,
+            record: result
+          });
+        }
+
+        return res.json({
+          success: true,
+          message: "Entrada registrada correctamente",
+          data: result
     });
 
   } catch (error) {
@@ -178,17 +188,27 @@ router.post('/exit', async (req, res) => {
       today
     ]);
 
-    res.json({
-      success: true,
-      message: "Salida registrada correctamente",
-      data: updated,
-      calculations: {
-        t_despalillo,
-        t_escogida,
-        t_monado,
-        sabado,
-        septimo_dia,
-        he_dinero
+    // Emitir evento al Dashboard
+        const io = req.app.get("io");
+        if (io) {
+          io.emit("attendance:updated", {
+            action: "exit",
+            employee_id,
+            record: updated
+          });
+        }
+
+        return res.json({
+          success: true,
+          message: "Salida registrada correctamente",
+          data: updated,
+          calculations: {
+            t_despalillo,
+            t_escogida,
+            t_monado,
+            sabado,
+            septimo_dia,
+            he_dinero
       }
     });
 
@@ -254,6 +274,15 @@ router.post('/scan', async (req, res) => {
         RETURNING *;
       `, [employee_id, today, now]);
 
+      const io = req.app.get("io");
+      if (io) {
+        io.emit("attendance:updated", {
+          action: "entry",
+          employee_id,
+          record: entry
+        });
+      }
+
       return res.json({
         success: true,
         action: "entry",
@@ -272,11 +301,20 @@ router.post('/scan', async (req, res) => {
       RETURNING *;
     `, [now, employee_id, today]);
 
-    res.json({
-      success: true,
-      action: "exit",
-      message: "Salida registrada",
-      data: exit
+    const io = req.app.get("io");
+      if (io) {
+        io.emit("attendance:updated", {
+          action: "exit",
+          employee_id,
+          record: exit
+        });
+      }
+
+      return res.json({
+        success: true,
+        action: "exit",
+        message: "Salida registrada",
+        data: exit
     });
 
   } catch (error) {

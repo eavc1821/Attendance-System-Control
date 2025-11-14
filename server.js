@@ -31,6 +31,9 @@ app.use((req, res, next) => {
 // 🌐 CORS – orígenes permitidos
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'https://gjd78.com',
+  `https://${process.env.RAILWAY_STATIC_URL}`,
+  `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`,
+  'https://attendance-system-control-production.up.railway.app',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'http://localhost:5173',
@@ -73,17 +76,15 @@ app.get('/', (req, res) => {
 const server = http.createServer(app);
 
 const io = new Server(server, {
+  transports: ['websocket'],
+  path: '/socket.io/',
   cors: {
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-
-      console.warn('❌ Socket.IO CORS bloqueado para:', origin);
-      return callback(new Error('CORS no permitido'));
-    },
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
     credentials: true
   }
 });
+
 
 // Guardar IO en la aplicación
 app.set('io', io);
