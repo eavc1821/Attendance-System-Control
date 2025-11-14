@@ -32,7 +32,6 @@ router.get('/today', async (req, res) => {
   }
 });
 
-
 // ===========================================
 // 🕐 REGISTRAR ENTRADA
 // ===========================================
@@ -54,20 +53,10 @@ router.post('/entry', async (req, res) => {
       RETURNING *;
     `, [employee_id, today, now]);
 
-    // Emitir evento al dashboard
-        const io = req.app.get("io");
-        if (io) {
-          io.emit("attendance:updated", {
-            action: "entry",
-            employee_id,
-            record: result
-          });
-        }
-
-        return res.json({
-          success: true,
-          message: "Entrada registrada correctamente",
-          data: result
+    return res.json({
+      success: true,
+      message: "Entrada registrada correctamente",
+      data: result
     });
 
   } catch (error) {
@@ -79,7 +68,6 @@ router.post('/entry', async (req, res) => {
     });
   }
 });
-
 
 // ===========================================
 // ⏰ REGISTRAR SALIDA + CÁLCULOS
@@ -124,9 +112,7 @@ router.post('/exit', async (req, res) => {
         septimo_dia = 0,
         he_dinero   = 0;
 
-    // ===========================================
-    // 👷 PRODUCCIÓN
-    // ===========================================
+    // PRODUCCIÓN
     if (emp.type === "Producción") {
       t_despalillo = Number((despalilloNum * 80).toFixed(2));
       t_escogida   = Number((escogidaNum * 70).toFixed(2));
@@ -137,26 +123,19 @@ router.post('/exit', async (req, res) => {
       sabado      = Number((subtotal * 0.090909).toFixed(2));
       septimo_dia = Number((subtotal * 0.181818).toFixed(2));
       he_dinero   = 0;
-    }
-
-    // ===========================================
-    // 💵 EMPLEADO "AL DÍA"
-    // ===========================================
-    else {
+    } else {
+      // AL DÍA
       const salary = Number(emp.monthly_salary) || 0;
       const salario_diario = salary / 30;
       const pago_hora = salario_diario / 8;
 
       he_dinero = Number(((pago_hora + pago_hora * 0.25) * hoursExtra).toFixed(2));
 
-      // No se calculan prop_sabado ni séptimo día aquí
       sabado = 0;
       septimo_dia = 0;
     }
 
-    // ===========================================
-    // 📝 ACTUALIZAR REGISTRO
-    // ===========================================
+    // ACTUALIZAR REGISTRO
     const updated = await runQuery(`
       UPDATE attendance
       SET
@@ -188,27 +167,17 @@ router.post('/exit', async (req, res) => {
       today
     ]);
 
-    // Emitir evento al Dashboard
-        const io = req.app.get("io");
-        if (io) {
-          io.emit("attendance:updated", {
-            action: "exit",
-            employee_id,
-            record: updated
-          });
-        }
-
-        return res.json({
-          success: true,
-          message: "Salida registrada correctamente",
-          data: updated,
-          calculations: {
-            t_despalillo,
-            t_escogida,
-            t_monado,
-            sabado,
-            septimo_dia,
-            he_dinero
+    return res.json({
+      success: true,
+      message: "Salida registrada correctamente",
+      data: updated,
+      calculations: {
+        t_despalillo,
+        t_escogida,
+        t_monado,
+        sabado,
+        septimo_dia,
+        he_dinero
       }
     });
 
@@ -233,10 +202,6 @@ router.post('/scan', async (req, res) => {
     if (!qr)
       return res.status(400).json({ success: false, message: "Falta QR" });
 
-    // Acepta formatos como:
-    // "employee:5"
-    // "EMPLOYEE:5"
-    // "employee: 5"
     const regex = /^employee[:\s]*([0-9]+)$/i;
     const match = qr.match(regex);
 
@@ -274,15 +239,6 @@ router.post('/scan', async (req, res) => {
         RETURNING *;
       `, [employee_id, today, now]);
 
-      const io = req.app.get("io");
-      if (io) {
-        io.emit("attendance:updated", {
-          action: "entry",
-          employee_id,
-          record: entry
-        });
-      }
-
       return res.json({
         success: true,
         action: "entry",
@@ -301,20 +257,11 @@ router.post('/scan', async (req, res) => {
       RETURNING *;
     `, [now, employee_id, today]);
 
-    const io = req.app.get("io");
-      if (io) {
-        io.emit("attendance:updated", {
-          action: "exit",
-          employee_id,
-          record: exit
-        });
-      }
-
-      return res.json({
-        success: true,
-        action: "exit",
-        message: "Salida registrada",
-        data: exit
+    return res.json({
+      success: true,
+      action: "exit",
+      message: "Salida registrada",
+      data: exit
     });
 
   } catch (error) {
@@ -326,7 +273,5 @@ router.post('/scan', async (req, res) => {
     });
   }
 });
-
-
 
 module.exports = router;

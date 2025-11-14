@@ -1,10 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const http = require('http');
-const { Server } = require('socket.io');
 const path = require('path');
-const fs = require('fs');
 
 // 🔧 Importar rutas
 const employeesRoutes = require('./routes/employees');
@@ -72,40 +69,12 @@ app.get('/', (req, res) => {
   res.send(`<h3>🚀 Backend Activo - ${new Date().toLocaleString()}</h3>`);
 });
 
-// 🌐 Crear servidor HTTP + Socket.IO correctamente
-const server = http.createServer(app);
-
-const io = new Server(server, {
-  path: "/socket.io/",
-  transports: ["websocket"],
-  pingInterval: 10000,
-  pingTimeout: 20000,
-  cors: {
-    origin: allowedOrigins,
-    credentials: true
-  }
-});
-
-
-
-// Guardar IO en la aplicación
-app.set('io', io);
-
-// Eventos Socket.IO
-io.on('connection', (socket) => {
-  console.log('🟢 Cliente conectado:', socket.id);
-
-  socket.on('disconnect', () => {
-    console.log('🔴 Cliente desconectado:', socket.id);
-  });
-});
-
-// 🚀 Iniciar servidor unificado
+// 🚀 Iniciar servidor
 const PORT = process.env.PORT || 5000;
 
 if (require.main === module) {
-  server.listen(PORT, () => {
-    console.log(`🚀 Servidor + Socket.IO escuchando en puerto ${PORT} — pid=${process.pid}`);
+  app.listen(PORT, () => {
+    console.log(`🚀 Servidor escuchando en puerto ${PORT} — pid=${process.pid}`);
   });
 }
 
