@@ -202,5 +202,92 @@ router.post('/exit', async (req, res) => {
   }
 });
 
+// ===========================================
+// 📸 ESCANEO QR -> REGISTRA AUTOMÁTICAMENTE
+// ===========================================
+router.post('/scan', async (req, res) => {
+  try {
+    const { qr } = req.body;
+
+    if (!qr)
+      return res.status(400).json({ success: false, message: "Falta QR" });
+
+    // Acepta formatos como:
+    // "employee:5"
+    // "EMPLOYEE:5"
+    // "employee: 5"
+    const regex = /^employee[:\s]*([0-9]+)$/i;
+    const match = qr.match(regex);
+
+    if (!match)
+      return res.status(400).json({ success: false, message: "QR inválido" });
+
+    const employee_id = Number(match[1]);
+
+    console.log("📌 Escaneo recibido -> employee_id:", employee_id);
+
+    // Validar empleado
+    const employee = await getQuery(
+      "SELECT * FROM employees WHERE id = $1",
+      [employee_id]
+    );
+
+    if (!employee)
+      return res.status(404).json({ success: false, message: "Empleado no encontrado" });
+
+    // Registrar automáticamente entrada o salida
+    const today = new Date().toISOString().substring(0, 10);
+
+    const existing = await getQuery(`
+      SELECT * FROM attendance
+      WHERE employee_id = $1 AND date = $2
+    `, [employee_id, today]);
+
+    if (!existing) {
+      // Registrar entrada
+      const now = new Date().toLocaleTimeString("es-HN", { hour12: false });
+
+      const entry = await runQuery(`
+        INSERT INTO attendance (employee_id, date, entry_time, created_at, updated_at)
+        VALUES ($1, $2, $3, NOW(), NOW())
+        RETURNING *;
+      `, [employee_id, today, now]);
+
+      return res.json({
+        success: true,
+        action: "entry",
+        message: "Entrada registrada",
+        data: entry
+      });
+    }
+
+    // Registrar salida
+    const now = new Date().toLocaleTimeString("es-HN", { hour12: false });
+
+    const exit = await runQuery(`
+      UPDATE attendance
+      SET exit_time = $1, updated_at = NOW()
+      WHERE employee_id = $2 AND date = $3
+      RETURNING *;
+    `, [now, employee_id, today]);
+
+    res.json({
+      success: true,
+      action: "exit",
+      message: "Salida registrada",
+      data: exit
+    });
+
+  } catch (error) {
+    console.error("❌ Error en /scan:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error procesando escaneo",
+      error: error.message
+    });
+  }
+});
+
+
 
 module.exports = router;
