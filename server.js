@@ -16,10 +16,17 @@ const usersRoutes = require('./routes/users');
 const dashboardRoutes = require('./routes/dashboard');
 const devRoutes = require('./routes/dev');
 const uploadsPath = path.join(__dirname, 'uploads');
+const { v4: uuidv4 } = require('uuid');
 
 
 // Inicializar app Express
 const app = express();
+
+app.use((req, res, next) => {
+  req.requestId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  console.log(`➡️ REQ ${req.method} ${req.url} id=${req.requestId} pid=${process.pid}`);
+  next();
+});
 
 // CORS
 const allowedOrigins = [
@@ -95,14 +102,14 @@ io.on('connection', (socket) => {
   });
 });
 
-// Puerto
-const PORT = process.env.PORT || 3001;
 
-// Iniciar servidor
-server.listen(PORT, () => {
-  const backendUrl = process.env.BACKEND_URL || `http://localhost:${PORT}`;
-  console.log(`✅ Servidor corriendo en ${backendUrl}`);
-  console.log(`✅ Socket.IO habilitado`);
-});
+// al final de server.js
+const PORT = process.env.PORT || 5000;
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Servidor escuchando en puerto ${PORT} — pid=${process.pid}`);
+  });
+}
 
 module.exports = app;

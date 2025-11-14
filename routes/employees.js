@@ -20,17 +20,15 @@ cloudinary.config({
 router.post('/', upload.single('photo'), async (req, res) => {
   try {
     const { name, dni, type, monthly_salary } = req.body;
-
     const photoUrl = req.file ? req.file.path : null;
 
-    // INSERT
+    // 1) INSERT EMPLEADO
     const insertSql = `
       INSERT INTO employees (name, dni, type, monthly_salary, photo)
       VALUES ($1, $2, $3, $4, $5)
-      RETURNING id
+      RETURNING id, qr_code
     `;
-
-    const result = await runQuery(insertSql, [
+    const insertResult = await runQuery(insertSql, [
       name,
       dni,
       type,
@@ -38,55 +36,69 @@ router.post('/', upload.single('photo'), async (req, res) => {
       photoUrl
     ]);
 
-    // VALIDAR FILAS
-    if (!result || !result.rows || result.rows.length === 0) {
-      console.error("❌ INSERT SIN FILAS:", result);
+    if (!insertResult || !insertResult.rows || insertResult.rows.length === 0) {
+      console.error("❌ INSERT SIN FILAS:", insertResult);
       throw new Error("No se devolvió ID después del INSERT");
     }
 
-    const employeeId = result.rows[0].id;
-    console.log("🆔 employeeId:", employeeId);
+    const employeeId = insertResult.rows[0].id;
+    console.log(`🆔 employeeId: ${employeeId} (pid=${process.pid} ts=${Date.now()})`);
 
-    // QR PAYLOAD
+    // ⬇⬇⬇ VALIDACIÓN EXTRA
+      if (!employeeId || Number.isNaN(Number(employeeId))) {
+        throw new Error('❌ employeeId inválido antes de generar QR');
+      }
+
+    // 2) Si por alguna razón ya existe qr_code (otro proceso lo generó), no re-generar
+    const check = await getQuery("SELECT qr_code FROM employees WHERE id = $1", [employeeId]);
+    if (check && check.qr_code) {
+      console.log(`⚠️ QR ya existe para employee ${employeeId}, saltando generación. (pid=${process.pid})`);
+      return res.status(201).json({
+        success: true,
+        employeeId,
+        photo: photoUrl,
+        qr: check.qr_code,
+        note: "QR ya existente"
+      });
+    }
+
+    // 3) Generar payload y buffer (FORZAR versión para evitar micro QR)
     const qrPayload = `employee:${employeeId}`;
-    console.log("📌 QR PAYLOAD:", qrPayload);
+    console.log(`📌 QR PAYLOAD: ${qrPayload} (pid=${process.pid})`);
 
-    // GENERAR QR
     const qrBuffer = await QRCode.toBuffer(qrPayload, {
-      type: "png",
+      type: 'png',
       version: 6,
-      errorCorrectionLevel: "H",
+      errorCorrectionLevel: 'H',
       width: 600,
       margin: 4
     });
 
-    // SUBIR QR
+    // 4) Subir por stream y asegurar que result tenga secure_url
     const qrUpload = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: "attendance-system/qrs",
-          public_id: `qr-${employeeId}`,
-          overwrite: true,
-          resource_type: "image",
-          format: "png"
-        },
-        (err, result) => {
-          if (err) reject(err);
-          else resolve(result);
-        }
-      );
+      const uploadStream = cloudinary.uploader.upload_stream({
+        folder: "attendance-system/qrs",
+        public_id: `qr-${employeeId}`,
+        overwrite: true,
+        resource_type: "image",
+        format: "png"
+      }, (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      });
       uploadStream.end(qrBuffer);
     });
 
-    console.log("📌 QR SUBIDO:", qrUpload.secure_url);
+    if (!qrUpload || !qrUpload.secure_url) {
+      throw new Error("Cloudinary no devolvió secure_url");
+    }
 
-    // GUARDAR URL QR
-    await runQuery(
-      "UPDATE employees SET qr_code = $1 WHERE id = $2",
-      [qrUpload.secure_url, employeeId]
-    );
+    console.log(`📌 QR SUBIDO: ${qrUpload.secure_url} (pid=${process.pid})`);
 
-    res.status(201).json({
+    // 5) Actualizar DB y responder
+    await runQuery("UPDATE employees SET qr_code = $1 WHERE id = $2", [qrUpload.secure_url, employeeId]);
+
+    return res.status(201).json({
       success: true,
       employeeId,
       photo: photoUrl,
@@ -95,13 +107,14 @@ router.post('/', upload.single('photo'), async (req, res) => {
 
   } catch (err) {
     console.error("❌ Error creando empleado:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Error creando empleado",
       error: err.message
     });
   }
 });
+
 
 
 
