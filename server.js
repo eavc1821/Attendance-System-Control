@@ -76,14 +76,16 @@ app.get('/', (req, res) => {
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  transports: ['websocket'],
-  path: '/socket.io/',
+  path: "/socket.io/",
+  transports: ["websocket"],
+  pingInterval: 10000,
+  pingTimeout: 20000,
   cors: {
     origin: allowedOrigins,
-    methods: ['GET', 'POST'],
     credentials: true
   }
 });
+
 
 
 // Guardar IO en la aplicación
