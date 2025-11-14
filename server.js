@@ -31,11 +31,19 @@ app.use((req, res, next) => {
   next();
 });
 // CORS
+// CORS: orígenes permitidos
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'https://gjd78.com',
+
+  // React (create-react-app)
   'http://localhost:3000',
-  'http://127.0.0.1:3000'
+  'http://127.0.0.1:3000',
+
+  // Vite (puerto por defecto 5173)
+  'http://localhost:5173',
+  'http://127.0.0.1:5173'
 ];
+
 
 app.use(cors({
   origin: function (origin, callback) {
