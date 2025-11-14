@@ -16,18 +16,20 @@ const usersRoutes = require('./routes/users');
 const dashboardRoutes = require('./routes/dashboard');
 const devRoutes = require('./routes/dev');
 const uploadsPath = path.join(__dirname, 'uploads');
-const { v4: uuidv4 } = require('uuid');
+
 
 
 // Inicializar app Express
 const app = express();
 
 app.use((req, res, next) => {
-  req.requestId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  // Generador simple sin dependencias
+  req.requestId = `${Date.now()}-${Math.random().toString(36).substring(2,8)}`;
+
   console.log(`➡️ REQ ${req.method} ${req.url} id=${req.requestId} pid=${process.pid}`);
+
   next();
 });
-
 // CORS
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'https://gjd78.com',
