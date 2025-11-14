@@ -207,6 +207,7 @@ router.post('/exit', async (req, res) => {
 // ===========================================
 router.post('/scan', async (req, res) => {
   try {
+    console.log("📥 QR RAW RECIBIDO:", req.body.qr);
     const { qr } = req.body;
 
     if (!qr)
