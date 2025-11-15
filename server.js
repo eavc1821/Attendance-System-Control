@@ -28,6 +28,7 @@ app.use((req, res, next) => {
 // 🌐 CORS – orígenes permitidos
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'https://gjd78.com',
+  'https://www.gjd78.com',
   `https://${process.env.RAILWAY_STATIC_URL}`,
   `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`,
   'https://attendance-system-control-production.up.railway.app',
